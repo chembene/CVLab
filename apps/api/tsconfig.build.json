@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    // Production build resolves @cvlab/types through the real node_modules
+    // package (built dist, see packages/types), not through the source
+    // "paths" override tsconfig.json uses for fast dev-time typechecking —
+    // that override would pull packages/types/src outside this rootDir.
+    "paths": {}
+  },
+  "exclude": ["node_modules", "dist", "test", "**/*.spec.ts"]
+}

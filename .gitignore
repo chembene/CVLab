@@ -13,9 +13,15 @@ build/
 .next/
 out/
 coverage/
+*.tsbuildinfo
 
 # Prisma
 prisma/generated/
+
+# Playwright
+test-results/
+playwright-report/
+apps/web/playwright/.cache/
 
 # Logs
 *.log

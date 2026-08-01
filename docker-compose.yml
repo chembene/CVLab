@@ -1,0 +1,43 @@
+# Local development infrastructure only — no production resources here.
+# Usage: npm run docker:up  (or: docker compose up -d postgres redis)
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: cvlab-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cvlab}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cvlab_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-cvlab_ai}
+    # Host port 55432, not 5432: this machine already has native PostgreSQL
+    # processes bound to 5432 (and 5433), which silently intercept
+    # connections to those ports instead of reaching this container. The
+    # container's internal port is still the Postgres default (5432).
+    ports:
+      - '${POSTGRES_PORT:-55432}:5432'
+    volumes:
+      - cvlab_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER:-cvlab}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: cvlab-redis
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    volumes:
+      - cvlab_redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  cvlab_postgres_data:
+  cvlab_redis_data:

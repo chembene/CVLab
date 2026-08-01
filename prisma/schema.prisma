@@ -1,0 +1,565 @@
+// CVLab AI — Prisma schema (Phase 0 foundation)
+//
+// Source of truth: docs/architecture/database-overview.md, cv-data-model.md,
+// credit-architecture.md, payment-architecture.md, ai-architecture.md.
+//
+// Timestamp convention (documented deviation from the blanket "every table has
+// created_at/updated_at" rule in prompts/04-database-rules.md — see the Phase 0
+// completion report for the explicit conflict callout):
+//   - Entities with a mutable lifecycle get both createdAt and updatedAt.
+//   - Entities that are strictly append-only / write-once (credit_transactions,
+//     cv_versions, history_events, audit_logs, test_answers, interview_questions,
+//     ai_requests) get only the timestamp(s) that entity's own doc section
+//     specifies — adding an updatedAt to a row that is contractually never
+//     updated would misleadingly imply mutability.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums (closed value sets explicitly defined in the architecture docs)
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  USER
+  ADMIN
+  SUPER_ADMIN
+
+  @@map("user_role")
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  PENDING_VERIFICATION
+  DELETED
+
+  @@map("user_status")
+}
+
+enum CvStatus {
+  DRAFT
+  PUBLISHED
+
+  @@map("cv_status")
+}
+
+enum CreditTransactionType {
+  PURCHASE
+  BONUS
+  CONSUMPTION
+  REFUND
+  ADMIN_ADJUSTMENT
+  EXPIRATION
+  PROMOTION
+  REVERSAL
+
+  @@map("credit_transaction_type")
+}
+
+/// Only MPESA exists in MVP. Future providers (EMOLA, CARD, ...) are added
+/// here only when actually implemented, per docs/architecture/payment-architecture.md.
+enum PaymentProviderName {
+  MPESA
+
+  @@map("payment_provider_name")
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+  EXPIRED
+  REVERSED
+  REFUNDED
+
+  @@map("payment_status")
+}
+
+enum AiRequestStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  TIMEOUT
+
+  @@map("ai_request_status")
+}
+
+// ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String     @id @default(uuid())
+  email        String
+  phone        String?
+  passwordHash String     @map("password_hash")
+  status       UserStatus @default(PENDING_VERIFICATION)
+  role         UserRole   @default(USER)
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+  deletedAt    DateTime?  @map("deleted_at")
+
+  profile             Profile?
+  cvs                 Cv[]
+  wallet              CreditWallet?
+  creditTransactions  CreditTransaction[]
+  payments            Payment[]
+  aiRequests          AiRequest[]
+  testSessions        TestSession[]
+  interviews          Interview[]
+  notifications       Notification[]
+  historyEvents       HistoryEvent[]
+  adminProfile        AdminUser?
+  auditLogsAsActor    AuditLog[]
+  sessions            Session[]
+  verificationTokens  VerificationToken[]
+  passwordResetTokens PasswordResetToken[]
+
+  // Soft-delete-aware uniqueness (users, profiles, cvs, tests, questions —
+  // see docs/architecture/database-overview.md §3) requires PARTIAL unique
+  // indexes ("WHERE deleted_at IS NULL"), which Prisma's schema language
+  // cannot express directly. These are added as a hand-written follow-up
+  // migration (see prisma/migrations/.../migration.sql) rather than invented
+  // here as plain @@unique, which would incorrectly block reusing an email
+  // after a soft-deleted account.
+  @@map("users")
+}
+
+model Profile {
+  id        String    @id @default(uuid())
+  userId    String    @unique @map("user_id")
+  headline  String?
+  // Structured personal/professional data (education, skills, experience,
+  // social links) — same JSONB-document rationale as CV content, see
+  // docs/architecture/cv-data-model.md.
+  content   Json?
+  photoUrl  String?   @map("photo_url")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("profiles")
+}
+
+model AdminUser {
+  id                String    @id @default(uuid())
+  userId            String    @unique @map("user_id")
+  permissions       Json?
+  mfaEnabled        Boolean   @default(false) @map("mfa_enabled")
+  mfaMethod         String?   @map("mfa_method")
+  lastAdminActionAt DateTime? @map("last_admin_action_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("admin_users")
+}
+
+// ---------------------------------------------------------------------------
+// Authentication (Phase 1) — docs/architecture/security-architecture.md §1.1
+// ---------------------------------------------------------------------------
+
+/// One row per issued refresh token (not per login). Rotation creates a new
+/// row in the same `familyId` chain and revokes the row it replaces; the
+/// row is never mutated back to valid. Reuse of an already-revoked row
+/// revokes every row sharing its `familyId` (compromise response).
+/// `refreshTokenHash` stores an HMAC-SHA256 digest (keyed by
+/// JWT_REFRESH_SECRET) of the opaque random token delivered to the client —
+/// never the raw token itself.
+model Session {
+  id               String    @id @default(uuid())
+  userId           String    @map("user_id")
+  familyId         String    @map("family_id")
+  refreshTokenHash String    @unique @map("refresh_token_hash")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  expiresAt        DateTime  @map("expires_at")
+  revokedAt        DateTime? @map("revoked_at")
+  lastUsedAt       DateTime? @map("last_used_at")
+  metadata         Json?
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([familyId])
+  @@map("sessions")
+}
+
+/// Email verification tokens. `tokenHash` stores an HMAC-SHA256 digest of
+/// the opaque token emailed to the user — never the raw token.
+model VerificationToken {
+  id         String    @id @default(uuid())
+  userId     String    @map("user_id")
+  tokenHash  String    @unique @map("token_hash")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  expiresAt  DateTime  @map("expires_at")
+  consumedAt DateTime? @map("consumed_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@map("verification_tokens")
+}
+
+/// Password reset tokens. Same hashing approach as VerificationToken.
+/// Successful consumption also revokes all of the user's active sessions
+/// (see AuthService.resetPassword) — a password reset should end every
+/// existing login, per standard security practice.
+model PasswordResetToken {
+  id         String    @id @default(uuid())
+  userId     String    @map("user_id")
+  tokenHash  String    @unique @map("token_hash")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  expiresAt  DateTime  @map("expires_at")
+  consumedAt DateTime? @map("consumed_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+// ---------------------------------------------------------------------------
+// CVs (structured JSONB document model — docs/architecture/cv-data-model.md)
+// ---------------------------------------------------------------------------
+
+model Cv {
+  id               String    @id @default(uuid())
+  userId           String    @map("user_id")
+  title            String
+  templateId       String?   @map("template_id")
+  currentVersionId String?   @unique @map("current_version_id")
+  status           CvStatus  @default(DRAFT)
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+  deletedAt        DateTime? @map("deleted_at")
+
+  user           User        @relation(fields: [userId], references: [id])
+  versions       CvVersion[] @relation("CvVersions")
+  currentVersion CvVersion?  @relation("CurrentVersion", fields: [currentVersionId], references: [id])
+
+  @@index([userId])
+  @@map("cvs")
+}
+
+model CvVersion {
+  id            String   @id @default(uuid())
+  cvId          String   @map("cv_id")
+  versionNumber Int      @map("version_number")
+  schemaVersion Int      @default(1) @map("schema_version")
+  content       Json
+  createdBy     String?  @map("created_by")
+  changeSummary String?  @map("change_summary")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  cv           Cv  @relation("CvVersions", fields: [cvId], references: [id])
+  currentForCv Cv? @relation("CurrentVersion")
+
+  @@unique([cvId, versionNumber])
+  @@map("cv_versions")
+}
+
+// ---------------------------------------------------------------------------
+// Credits (docs/architecture/credit-architecture.md)
+// ---------------------------------------------------------------------------
+
+model CreditWallet {
+  id                String   @id @default(uuid())
+  userId            String   @unique @map("user_id")
+  availableCredits  Int      @default(0) @map("available_credits")
+  lifetimePurchased Int      @default(0) @map("lifetime_credits_purchased")
+  lifetimeConsumed  Int      @default(0) @map("lifetime_credits_consumed")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("credit_wallets")
+}
+
+/// Append-only ledger — the system of record. Never updated or deleted.
+model CreditTransaction {
+  id             String                @id @default(uuid())
+  userId         String                @map("user_id")
+  amount         Int
+  type           CreditTransactionType
+  balanceBefore  Int                   @map("balance_before")
+  balanceAfter   Int                   @map("balance_after")
+  // Loose, polymorphic pointer (e.g. a payment id or ai_request id) — never a
+  // hard FK, since it can reference different tables depending on `type`.
+  reference      String?
+  description    String?
+  actor          String?
+  metadata       Json?
+  idempotencyKey String                @unique @map("idempotency_key")
+  createdAt      DateTime              @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+  @@map("credit_transactions")
+}
+
+model CreditPackage {
+  id           String   @id @default(uuid())
+  priceMt      Decimal  @map("price_mt") @db.Decimal(10, 2)
+  baseCredits  Int      @map("base_credits")
+  bonusCredits Int      @default(0) @map("bonus_credits")
+  totalCredits Int      @map("total_credits")
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  payments Payment[]
+
+  @@map("credit_packages")
+}
+
+model FeaturePricing {
+  id         String   @id @default(uuid())
+  featureKey String   @unique @map("feature_key")
+  cost       Int
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@map("feature_pricing")
+}
+
+// ---------------------------------------------------------------------------
+// Payments (docs/architecture/payment-architecture.md)
+// ---------------------------------------------------------------------------
+
+model Payment {
+  id                String              @id @default(uuid())
+  userId            String              @map("user_id")
+  packageId         String              @map("package_id")
+  provider          PaymentProviderName
+  providerReference String?             @map("provider_reference")
+  amount            Decimal             @db.Decimal(10, 2)
+  currency          String              @default("MZN")
+  status            PaymentStatus       @default(PENDING)
+  metadata          Json?
+  createdAt         DateTime            @default(now()) @map("created_at")
+  updatedAt         DateTime            @updatedAt @map("updated_at")
+  completedAt       DateTime?           @map("completed_at")
+
+  user    User          @relation(fields: [userId], references: [id])
+  package CreditPackage @relation(fields: [packageId], references: [id])
+
+  // NULLs are distinct in Postgres unique indexes, so multiple PENDING
+  // payments without a provider reference yet can coexist; only once a
+  // provider reference is set does a duplicate become impossible.
+  @@unique([provider, providerReference])
+  @@index([userId])
+  @@map("payments")
+}
+
+// ---------------------------------------------------------------------------
+// AI (docs/architecture/ai-architecture.md)
+// ---------------------------------------------------------------------------
+
+model AiRequest {
+  id             String          @id @default(uuid())
+  userId         String          @map("user_id")
+  feature        String
+  status         AiRequestStatus @default(PENDING)
+  model          String?
+  requestId      String?         @map("request_id")
+  inputTokens    Int?            @map("input_tokens")
+  outputTokens   Int?            @map("output_tokens")
+  totalTokens    Int?            @map("total_tokens")
+  estimatedCost  Decimal?        @map("estimated_cost") @db.Decimal(10, 4)
+  creditsCharged Int             @default(0) @map("credits_charged")
+  durationMs     Int?            @map("duration_ms")
+  errorCode      String?         @map("error_code")
+  metadata       Json?
+  // Required by docs/architecture/database-overview.md §4 (idempotency-critical
+  // constraints) even though not enumerated in ai-architecture.md §4's field
+  // list — added here to satisfy the explicit unique-constraint requirement.
+  idempotencyKey String          @unique @map("idempotency_key")
+  createdAt      DateTime        @default(now()) @map("created_at")
+  completedAt    DateTime?       @map("completed_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([feature, createdAt])
+  @@index([status])
+  @@map("ai_requests")
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+model Test {
+  id        String    @id @default(uuid())
+  title     String
+  category  String?
+  timeLimit Int?      @map("time_limit")
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  questions Question[]
+  sessions  TestSession[]
+
+  @@index([category])
+  @@map("tests")
+}
+
+model Question {
+  id            String    @id @default(uuid())
+  testId        String    @map("test_id")
+  prompt        String
+  choices       Json
+  correctAnswer String    @map("correct_answer")
+  explanation   String?
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  deletedAt     DateTime? @map("deleted_at")
+
+  test    Test         @relation(fields: [testId], references: [id])
+  answers TestAnswer[]
+
+  @@index([testId])
+  @@map("questions")
+}
+
+/// One attempt at a test. Retakes allowed — every attempt is its own row,
+/// never overwritten. See docs/architecture/database-overview.md §2.
+model TestSession {
+  id            String    @id @default(uuid())
+  userId        String    @map("user_id")
+  testId        String    @map("test_id")
+  attemptNumber Int       @map("attempt_number")
+  status        String    @default("IN_PROGRESS")
+  score         Int?
+  startedAt     DateTime  @default(now()) @map("started_at")
+  completedAt   DateTime? @map("completed_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  user    User         @relation(fields: [userId], references: [id])
+  test    Test         @relation(fields: [testId], references: [id])
+  answers TestAnswer[]
+
+  @@unique([userId, testId, attemptNumber])
+  @@index([userId, testId])
+  @@map("test_sessions")
+}
+
+model TestAnswer {
+  id             String   @id @default(uuid())
+  testSessionId  String   @map("test_session_id")
+  questionId     String   @map("question_id")
+  selectedAnswer String?  @map("selected_answer")
+  isCorrect      Boolean? @map("is_correct")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  session  TestSession @relation(fields: [testSessionId], references: [id])
+  question Question    @relation(fields: [questionId], references: [id])
+
+  @@index([testSessionId])
+  @@map("test_answers")
+}
+
+// ---------------------------------------------------------------------------
+// Interviews
+// ---------------------------------------------------------------------------
+
+model Interview {
+  id           String    @id @default(uuid())
+  userId       String    @map("user_id")
+  status       String    @default("IN_PROGRESS")
+  overallScore Int?      @map("overall_score")
+  startedAt    DateTime  @default(now()) @map("started_at")
+  completedAt  DateTime? @map("completed_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  user      User                @relation(fields: [userId], references: [id])
+  questions InterviewQuestion[]
+
+  @@index([userId])
+  @@map("interviews")
+}
+
+model InterviewQuestion {
+  id           String   @id @default(uuid())
+  interviewId  String   @map("interview_id")
+  questionText String   @map("question_text")
+  userAnswer   String?  @map("user_answer")
+  evaluation   String?
+  score        Int?
+  order        Int
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  interview Interview @relation(fields: [interviewId], references: [id])
+
+  @@index([interviewId])
+  @@map("interview_questions")
+}
+
+// ---------------------------------------------------------------------------
+// Notifications, History, Audit
+// ---------------------------------------------------------------------------
+
+model Notification {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  type      String
+  payload   Json?
+  readAt    DateTime? @map("read_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, readAt])
+  @@map("notifications")
+}
+
+model HistoryEvent {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  eventType String   @map("event_type")
+  entityRef String?  @map("entity_ref")
+  metadata  Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+  @@map("history_events")
+}
+
+/// Append-only audit trail. Never deleted through normal application flows.
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorId    String   @map("actor_id")
+  action     String
+  targetType String?  @map("target_type")
+  targetId   String?  @map("target_id")
+  before     Json?
+  after      Json?
+  reason     String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  actor User @relation(fields: [actorId], references: [id])
+
+  @@index([actorId, createdAt])
+  @@map("audit_logs")
+}

@@ -1,0 +1,15 @@
+{
+  "extends": "@cvlab/config/typescript/nextjs.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@cvlab/types": ["../../packages/types/src/index.ts"],
+      "@cvlab/types/*": ["../../packages/types/src/*"],
+      "@cvlab/ui": ["../../packages/ui/src/index.ts"],
+      "@cvlab/ui/*": ["../../packages/ui/src/*"],
+      "@/*": ["./*"]
+    }
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules"]
+}

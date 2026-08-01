@@ -1,0 +1,10 @@
+node_modules
+dist
+build
+.next
+out
+coverage
+prisma/migrations
+pnpm-lock.yaml
+package-lock.json
+*.tsbuildinfo

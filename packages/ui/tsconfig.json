@@ -1,0 +1,11 @@
+{
+  "extends": "@cvlab/config/typescript/base.json",
+  "compilerOptions": {
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "lib": ["dom", "dom.iterable", "ES2022"],
+    "noEmit": true
+  },
+  "include": ["src"]
+}
