@@ -1,0 +1,111 @@
+# Target Market
+
+## Primary Market
+
+Young professionals seeking employment.
+
+Recent graduates.
+
+Career changers.
+
+Professionals looking for international opportunities.
+
+NGO professionals.
+
+Government employees.
+
+Private sector professionals.
+
+---
+
+## Secondary Market
+
+Universities.
+
+Training institutions.
+
+Recruitment agencies.
+
+Career coaches.
+
+HR consulting firms.
+
+Companies hiring large numbers of candidates.
+
+---
+
+# Geographic Strategy
+
+Phase 1
+
+Mozambique
+
+Phase 2
+
+Southern Africa
+
+Phase 3
+
+Portuguese-speaking Africa
+
+Phase 4
+
+Global market
+
+---
+
+# User Personas
+
+Graduate
+
+Needs:
+
+- First CV
+- Interview preparation
+- ATS optimization
+
+Professional
+
+Needs:
+
+- Career progression
+- Better opportunities
+- Multiple resume versions
+
+Experienced Manager
+
+Needs:
+
+- Executive CV
+- Leadership positioning
+- International applications
+
+Recruiter (Future)
+
+Needs:
+
+- Candidate management
+- Resume review
+- Analytics
+
+---
+
+# Target Industries
+
+Technology
+
+Finance
+
+NGOs
+
+Government
+
+Education
+
+Healthcare
+
+Engineering
+
+Telecommunications
+
+Energy

@@ -1,0 +1,345 @@
+# CVLab AI - Competitive Advantages
+
+## Vision
+
+CVLab AI is not just a CV builder.
+
+It is an AI-powered Career Platform that helps professionals prepare, optimize, track, and improve every stage of the recruitment process.
+
+The objective is to become the user's personal career assistant.
+
+---
+
+# Product Philosophy
+
+Most CV builders focus on producing documents.
+
+CVLab AI focuses on helping users get interviews.
+
+Every feature must contribute directly or indirectly to increasing the user's chances of getting hired.
+
+---
+
+# Core Competitive Advantages
+
+## 1. Master Resume
+
+Unlike traditional CV builders, CVLab AI stores all professional information inside a single Master Resume.
+
+Users never need to maintain multiple CVs manually.
+
+Each CV becomes a customized version generated from the Master Resume.
+
+Benefits:
+
+- Single source of truth
+- Easier maintenance
+- No duplicated information
+- Faster CV customization
+- Future AI optimization
+
+---
+
+## 2. Resume Versioning
+
+Every important modification creates a new version.
+
+Nothing is overwritten.
+
+Users can:
+
+- Compare versions
+- Restore previous versions
+- Track improvements
+- Keep historical records
+
+Similar to Git versioning for software development.
+
+---
+
+## 3. Job Target Optimization
+
+Users can paste a job vacancy URL.
+
+CVLab AI analyzes the vacancy and creates a Job Target containing:
+
+- Company
+- Position
+- Requirements
+- Responsibilities
+- Keywords
+- Skills
+- Technologies
+- Experience level
+
+The platform understands what employers are looking for before suggesting improvements.
+
+---
+
+## 4. AI Resume Optimization
+
+Instead of generic suggestions, AI generates recommendations based on:
+
+- Master Resume
+- Job Target
+- ATS requirements
+- User experience
+
+Suggestions are contextual and personalized.
+
+Examples:
+
+- Improve summary
+- Rewrite work experience
+- Highlight relevant skills
+- Remove irrelevant information
+- Improve ATS compatibility
+
+---
+
+## 5. ATS Compatibility
+
+CVLab AI evaluates how well a resume matches a job description.
+
+Outputs include:
+
+- ATS Match Score
+- Missing keywords
+- Missing skills
+- Suggested improvements
+- Overall compatibility percentage
+
+---
+
+## 6. Intelligent Cover Letter Generation
+
+Cover letters are generated specifically for each vacancy.
+
+They are based on:
+
+- Resume
+- Job description
+- Company
+- User profile
+
+Never generic templates.
+
+---
+
+## 7. Interview Preparation
+
+The platform generates interview questions using:
+
+- Job description
+- Resume
+- Required skills
+- Seniority level
+
+Users practice interviews relevant to the exact vacancy.
+
+---
+
+## 8. Technical Assessment Practice
+
+Practice tests are automatically selected according to:
+
+- Position
+- Technologies
+- Industry
+- Seniority
+
+Helping users prepare before interviews.
+
+---
+
+## 9. Career Dashboard
+
+Users manage their entire job search from one place.
+
+Dashboard includes:
+
+- Applications
+- Resume versions
+- Cover letters
+- Interview history
+- ATS scores
+- AI suggestions
+- Credits
+- Notifications
+
+---
+
+## 10. Application Tracking
+
+Each application is tracked independently.
+
+Status examples:
+
+- Draft
+- Applied
+- Screening
+- Interview
+- Technical Test
+- Offer
+- Rejected
+- Accepted
+
+Historical timeline is preserved.
+
+---
+
+## 11. AI Learning History
+
+Every AI interaction is recorded.
+
+Users can revisit:
+
+- Suggestions
+- Previous resume versions
+- Prompt history
+- Improvement history
+
+Nothing is lost.
+
+---
+
+## 12. Credit System
+
+The platform uses transparent credits.
+
+Credits are consumed only after successful processing.
+
+Credits are never lost because of system failures.
+
+Every transaction is auditable.
+
+---
+
+## 13. Mobile First
+
+The platform is designed for:
+
+- Desktop
+- Tablet
+- Mobile
+
+Users can update resumes and applications anywhere.
+
+---
+
+## 14. Extensible Architecture
+
+The architecture is provider-independent.
+
+Future integrations may include:
+
+- OpenAI
+- Anthropic
+- Google Gemini
+- Local LLMs
+
+Payment providers:
+
+- M-Pesa
+- eMola
+- Visa
+- Mastercard
+
+Storage:
+
+- Cloudflare R2
+- Amazon S3
+- Azure Blob Storage
+
+Authentication:
+
+- Google
+- Microsoft
+- LinkedIn
+
+No business logic depends on a specific provider.
+
+---
+
+# Future Differentiators
+
+Potential future features include:
+
+- AI Career Coach
+- Salary estimation
+- Skills gap analysis
+- Career roadmap recommendations
+- Automatic LinkedIn profile optimization
+- Portfolio generation
+- Recruiter dashboard
+- Company dashboard
+- Candidate benchmarking
+- Labor market analytics
+- AI career planning
+- AI learning recommendations
+
+---
+
+# Product Principles
+
+Every new feature must satisfy at least one of the following:
+
+- Increase interview chances
+- Improve resume quality
+- Reduce application time
+- Improve ATS score
+- Improve candidate confidence
+- Help career development
+- Save user time
+
+If a feature does not create measurable value for job seekers, it should not be implemented.
+
+---
+
+# Long-Term Goal
+
+Transform CVLab AI from a resume builder into a complete AI-powered career ecosystem.
+
+The platform should assist users from:
+
+Career Planning
+
+↓
+
+Resume Creation
+
+↓
+
+Resume Optimization
+
+↓
+
+ATS Analysis
+
+↓
+
+Cover Letter
+
+↓
+
+Job Applications
+
+↓
+
+Interview Preparation
+
+↓
+
+Technical Assessments
+
+↓
+
+Job Offer
+
+↓
+
+Career Growth
+
+All user data should remain centralized around the Master Resume, allowing every feature to reuse structured information without duplication.
+
+The ultimate goal is to become the most intelligent career platform for professionals in Africa, with a strong foundation in Mozambique and the ability to expand globally.

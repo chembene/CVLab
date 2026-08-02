@@ -4,8 +4,10 @@ CVLab AI is a career-development SaaS platform: AI-assisted CV building, cover l
 analysis, technical tests and interview practice — built first for the Mozambican job market
 (Portuguese, MZN/MT), architected to expand internationally.
 
-> **Status: Phase 0 — Project Foundation.** No product features are implemented yet. This repo
-> currently contains the monorepo scaffold, database schema, and infrastructure foundation only.
+> **Status: Phase 2A — Resume Engine Foundation.** Implemented so far: monorepo/infrastructure
+> foundation (Phase 0), full authentication & identity (Phase 1), and the Master Resume engine —
+> Profile, Master Resume, and 11 resume sections (Phase 2A). Credits, payments, AI, CV export, ATS
+> analysis, tests and interviews are **not** implemented yet.
 > See [`docs/development/roadmap.md`](docs/development/roadmap.md) for what comes next.
 
 ## Architecture Overview
@@ -29,16 +31,35 @@ Full architecture decisions live in [`docs/architecture/`](docs/architecture) an
 [`docs/product/mvp-scope.md`](docs/product/mvp-scope.md) — those documents are the source of
 truth; this README only describes how to run what's implemented so far.
 
-Backend design (Phase 0 foundation, per [`docs/architecture/system-architecture.md`](docs/architecture/system-architecture.md)):
+Backend design (per [`docs/architecture/system-architecture.md`](docs/architecture/system-architecture.md)):
 
 - Clean layering: Controller → Service → Repository → Database.
 - Every API response follows the `{ success, data }` / `{ success: false, error }` envelope
   (`prompts/13-api-contracts.md`), applied via a global response interceptor and exception filter.
 - Routes are versioned under `/api/v1`.
-- Global `ValidationPipe`, Helmet, CORS, and a rate-limit foundation (`@nestjs/throttler`) are
-  wired up; authentication/RBAC are **not** implemented yet (Phase 1).
+- Global `ValidationPipe`, Helmet, CORS, and rate limiting (`@nestjs/throttler`) are wired up.
+- JWT access tokens (15 min) + rotating opaque refresh tokens (30 days, HttpOnly cookie, reuse
+  detection) power authentication; RBAC (`USER`/`ADMIN`/`SUPER_ADMIN`) is enforced via
+  `JwtAuthGuard`/`RolesGuard`. See [`docs/architecture/security-architecture.md`](docs/architecture/security-architecture.md).
+- Domain events (`@nestjs/event-emitter`) drive cross-cutting side effects — e.g. every
+  Profile/Master Resume/Section mutation writes a `history_events` row via `HistoryListener`. See
+  [`docs/architecture/system-architecture.md`](docs/architecture/system-architecture.md) §4.
 - `PrismaService` and `RedisService` are global, injectable connection wrappers used by the
   `/api/v1/health` endpoint to prove real DB/cache connectivity.
+
+## Implemented Modules
+
+| Module                                                          | Status                 | Docs                                                                                             |
+| --------------------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------ |
+| Auth & Identity                                                 | Implemented (Phase 1)  | [`docs/architecture/security-architecture.md`](docs/architecture/security-architecture.md)       |
+| Profile                                                         | Implemented (Phase 2A) | [`docs/architecture/master-resume-data-model.md`](docs/architecture/master-resume-data-model.md) |
+| Master Resume + 11 sections                                     | Implemented (Phase 2A) | [`docs/architecture/master-resume-data-model.md`](docs/architecture/master-resume-data-model.md) |
+| Credits, Payments, AI, CV export, ATS, Tests, Interviews, Admin | Not implemented        | [`docs/development/roadmap.md`](docs/development/roadmap.md)                                     |
+
+Frontend: `/login`, `/register`, `/dashboard/profile` (personal info form), `/dashboard/resume`
+(Master Resume summary + one independent card per section, add/edit/delete/reorder — never one
+giant form) — all in Portuguese, all requiring an authenticated session (`/dashboard/*` redirects
+to `/login` otherwise).
 
 ## Prerequisites
 
@@ -60,10 +81,12 @@ This installs all workspaces (`apps/*`, `packages/*`) in one pass via npm worksp
 cp .env.example .env
 ```
 
-`.env.example` documents every variable the platform will eventually need, grouped by phase. Only
-`NODE_ENV`, `PORT`, `DATABASE_URL`, `REDIS_URL`, and the CORS/URL variables are actually read in
-Phase 0 — the JWT/OpenAI/R2/M-Pesa placeholders are reserved for later phases so the shape of
-configuration doesn't change later. **Never commit a real `.env` file.**
+`.env.example` documents every variable the platform will eventually need, grouped by phase.
+`NODE_ENV`, `PORT`, `DATABASE_URL`, `REDIS_URL`, the CORS/URL variables, and — as of Phase 1 —
+`JWT_ACCESS_SECRET`/`JWT_REFRESH_SECRET` (min 32 chars each) plus their TTL variables are read and
+validated at boot (fails fast on missing/malformed config, per `env.validation.ts`'s Joi schema).
+The OpenAI/R2/M-Pesa placeholders are still reserved for later phases. **Never commit a real
+`.env` file.**
 
 The default `.env.example` values already match `docker-compose.yml`'s default Postgres
 credentials, so local setup works out of the box without editing anything.
@@ -110,6 +133,18 @@ npm run test:e2e -w @cvlab/web   # Playwright e2e — see note below
 `npm run test:e2e -w @cvlab/web`. CI intentionally does not run the Playwright suite yet, to avoid
 that extra download on every run — see "Known Limitations" in the Phase 0 completion report.
 
+**Web unit tests** (`apps/web/__tests__/`, `apps/web/lib/*.test.ts(x)`) cover the API client
+envelope handling, `AuthProvider`'s session-restore/login/logout flows, the landing page's
+logged-in/logged-out states, the `/dashboard/*` route guard, the Profile page, and the generic
+`SectionManager` (add/list/delete) — run via Jest + React Testing Library with `fetch` mocked, no
+real backend required.
+
+**API e2e tests** (`apps/api/test/`) run against real Postgres + Redis (via `docker:up`), never
+mocked — `auth.e2e-spec.ts` covers the 14 authentication security cases (wrong password, unknown
+email, suspended/deleted accounts, expired/revoked/reused refresh tokens, role escalation, etc.);
+`resume-engine.e2e-spec.ts` covers Profile/Master Resume/all 11 sections, cross-user isolation,
+completion-percentage recalculation, and history events (46 tests).
+
 ## Docker
 
 `docker-compose.yml` provides **local development infrastructure only** (PostgreSQL 16, Redis 7) —
@@ -122,11 +157,14 @@ npm run docker:down   # docker compose down
 
 ## Database
 
-The Prisma schema (`prisma/schema.prisma`) implements the full Phase 0 data model — 20 entities
-covering identity, CVs (structured JSONB documents with versioning), the credit ledger, payments,
-AI request tracking, tests, interviews, notifications, history and audit logs. See
+The Prisma schema (`prisma/schema.prisma`) covers the full Phase 0 data model (identity, CVs —
+dormant, see below, credit ledger, payments, AI request tracking, tests, interviews, notifications,
+history, audit logs), extended in Phase 1 (sessions, verification/password-reset tokens) and Phase
+2A (Profile redesign, Master Resume, 11 resume sections). See
 [`docs/architecture/database-overview.md`](docs/architecture/database-overview.md) for the
-authoritative entity-by-entity rationale.
+authoritative entity-by-entity rationale and
+[`docs/architecture/master-resume-data-model.md`](docs/architecture/master-resume-data-model.md)
+for the Master Resume model specifically.
 
 ```bash
 npm run db:generate         # regenerate the Prisma client after a schema change
@@ -135,8 +173,9 @@ npm run db:migrate:deploy   # apply existing migrations (CI/production style)
 npm run db:studio           # open Prisma Studio
 ```
 
-No business modules (auth, CVs, credits, payments, ...) query this schema yet — Phase 0 only
-proves the schema itself is valid and migratable.
+Auth, Profile, and Master Resume/Sections query this schema in production. Credits, payments, CVs,
+AI, tests, and interviews do not yet — their tables exist but are dormant, prepared ahead of the
+phases that implement them.
 
 ## Available Root Scripts
 
@@ -166,18 +205,29 @@ proves the schema itself is valid and migratable.
 ├── apps/
 │   ├── api/                  NestJS backend
 │   │   ├── src/
-│   │   │   ├── common/       Logger, global exception filter, response interceptor
-│   │   │   ├── config/       Env validation + ConfigModule wiring
-│   │   │   ├── health/       GET /api/v1/health
-│   │   │   ├── prisma/       PrismaService (global)
-│   │   │   ├── redis/        RedisService (global)
+│   │   │   ├── common/               Logger, global exception filter, response interceptor,
+│   │   │   │                         owner-or-admin authorization util, domain events
+│   │   │   ├── config/                Env validation + ConfigModule wiring
+│   │   │   ├── health/                 GET /api/v1/health
+│   │   │   ├── prisma/                 PrismaService (global)
+│   │   │   ├── redis/                  RedisService (global)
+│   │   │   ├── users/                  User identity, RBAC roles
+│   │   │   ├── auth/                   Register/login/refresh/logout, tokens, sessions, guards
+│   │   │   ├── profile/                Personal/contact info (Phase 2A)
+│   │   │   ├── master-resume/          Master Resume summary + completion% (Phase 2A)
+│   │   │   ├── resume-sections/        Generic engine for all 11 resume sections (Phase 2A)
+│   │   │   ├── resume-completion/      Completion-percentage calculator (Phase 2A)
+│   │   │   ├── history/                Domain-event listener writing history_events (Phase 2A)
 │   │   │   ├── app.module.ts
 │   │   │   └── main.ts
-│   │   └── test/             e2e (supertest)
+│   │   └── test/                       e2e (supertest), against real Postgres/Redis
 │   └── web/                  Next.js frontend
-│       ├── app/               App Router (layout, landing/status page)
-│       ├── __tests__/         Jest + React Testing Library
-│       └── e2e/                Playwright
+│       ├── app/                        App Router — landing, login, register, dashboard/profile,
+│       │                               dashboard/resume
+│       ├── components/                 SectionManager (generic, drives all 11 section cards)
+│       ├── lib/                        api-client, auth-context, section-fields registry
+│       ├── __tests__/, lib/*.test.tsx  Jest + React Testing Library
+│       └── e2e/                        Playwright
 ├── packages/
 │   ├── ui/                   Shared React components
 │   ├── types/                Shared TS types/enums (frontend/backend contract)

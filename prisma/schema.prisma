@@ -93,6 +93,26 @@ enum AiRequestStatus {
   @@map("ai_request_status")
 }
 
+enum JobTargetStatus {
+  DRAFT
+  READY
+  ARCHIVED
+
+  @@map("job_target_status")
+}
+
+enum ApplicationStatus {
+  SAVED
+  APPLIED
+  INTERVIEW
+  OFFER
+  REJECTED
+  WITHDRAWN
+  ARCHIVED
+
+  @@map("application_status")
+}
+
 // ---------------------------------------------------------------------------
 // Identity
 // ---------------------------------------------------------------------------
@@ -109,6 +129,9 @@ model User {
   deletedAt    DateTime?  @map("deleted_at")
 
   profile             Profile?
+  masterResume        MasterResume?
+  jobTargets          JobTarget[]
+  applications        Application[]
   cvs                 Cv[]
   wallet              CreditWallet?
   creditTransactions  CreditTransaction[]
@@ -134,15 +157,35 @@ model User {
   @@map("users")
 }
 
+/// Personal information only — never professional/career data (that's
+/// MasterResume + its sections, below). Phase 2A replaces the earlier
+/// generic `content: Json` placeholder from Phase 0 with explicit columns
+/// now that the concrete field list is known; no Profile rows existed yet
+/// (no Phase 0/1 module ever wrote to this table), so this is additive in
+/// practice even though it's a structural change to the table.
 model Profile {
-  id        String    @id @default(uuid())
-  userId    String    @unique @map("user_id")
-  headline  String?
-  // Structured personal/professional data (education, skills, experience,
-  // social links) — same JSONB-document rationale as CV content, see
-  // docs/architecture/cv-data-model.md.
-  content   Json?
-  photoUrl  String?   @map("photo_url")
+  id          String    @id @default(uuid())
+  userId      String    @unique @map("user_id")
+  firstName   String?   @map("first_name")
+  lastName    String?   @map("last_name")
+  displayName String?   @map("display_name")
+  headline    String?
+  phone       String?
+  email       String?
+  country     String?
+  city        String?
+  address     String?
+  birthDate   DateTime? @map("birth_date") @db.Date
+  linkedin    String?
+  github      String?
+  portfolio   String?
+  website     String?
+  // Stores a URL/reference into object storage (Cloudflare R2, Phase 5),
+  // never the binary image itself — named `photoUrl` rather than the
+  // brief's literal `photo` for that reason.
+  photoUrl    String?   @map("photo_url")
+  bio         String?
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
@@ -150,6 +193,414 @@ model Profile {
   user User @relation(fields: [userId], references: [id])
 
   @@map("profiles")
+}
+
+// ---------------------------------------------------------------------------
+// Resume Engine (Phase 2A) — docs/architecture/master-resume-data-model.md
+//
+// The platform's professional-data source of truth is the Master Resume:
+// exactly one per user, holding all career information via normalized
+// section entities below. This supersedes the Phase 0 assumption that
+// `cvs`/`cv_versions` (JSONB) would be the primary professional-data store;
+// those tables remain in the schema, untouched and unused so far (no rows
+// exist), reserved for a later phase where a "CV" becomes a filtered/
+// exported view generated FROM the master resume — see the data-model doc
+// for the full reconciliation.
+// ---------------------------------------------------------------------------
+
+model MasterResume {
+  id     String @id @default(uuid())
+  userId String @unique @map("user_id")
+
+  title                String?
+  summary              String?
+  careerLevel          String?  @map("career_level")
+  yearsExperience      Int?     @map("years_experience")
+  desiredPosition      String?  @map("desired_position")
+  desiredSalary        Decimal? @map("desired_salary") @db.Decimal(12, 2)
+  currency             String   @default("MZN")
+  // Open string, not a closed enum — visibility semantics (PRIVATE/PUBLIC/
+  // UNLISTED/...) aren't specified yet; defaulting to the safest option.
+  visibility           String   @default("PRIVATE")
+  // Recomputed server-side on every mutation to this resume or its
+  // sections — see MasterResumeService/completion.util.ts. Never accepted
+  // as client input.
+  completionPercentage Int      @default(0) @map("completion_percentage")
+  status               String   @default("DRAFT")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  workExperiences      WorkExperience[]
+  educations           Education[]
+  skills               Skill[]
+  languages            Language[]
+  certificates         Certificate[]
+  projects             Project[]
+  courses              Course[]
+  awards               Award[]
+  publications         Publication[]
+  volunteerExperiences VolunteerExperience[]
+  references           Reference[]
+
+  @@map("master_resumes")
+}
+
+model WorkExperience {
+  id               String    @id @default(uuid())
+  resumeId         String    @map("resume_id")
+  company          String
+  position         String
+  employmentType   String?   @map("employment_type")
+  location         String?
+  country          String?
+  startDate        DateTime  @map("start_date") @db.Date
+  endDate          DateTime? @map("end_date") @db.Date
+  currentlyWorking Boolean   @default(false) @map("currently_working")
+  description      String?
+  achievements     String[]
+  technologies     String[]
+  displayOrder     Int       @default(0) @map("display_order")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+  deletedAt        DateTime? @map("deleted_at")
+
+  resume MasterResume @relation(fields: [resumeId], references: [id])
+
+  @@index([resumeId])
+  @@map("work_experiences")
+}
+
+model Education {
+  id           String    @id @default(uuid())
+  resumeId     String    @map("resume_id")
+  institution  String
+  degree       String?
+  field        String?
+  location     String?
+  startDate    DateTime? @map("start_date") @db.Date
+  endDate      DateTime? @map("end_date") @db.Date
+  description  String?
+  displayOrder Int       @default(0) @map("display_order")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  deletedAt    DateTime? @map("deleted_at")
+
+  resume MasterResume @relation(fields: [resumeId], references: [id])
+
+  @@index([resumeId])
+  @@map("educations")
+}
+
+model Skill {
+  id              String    @id @default(uuid())
+  resumeId        String    @map("resume_id")
+  name            String
+  category        String?
+  level           String?
+  yearsExperience Int?      @map("years_experience")
+  displayOrder    Int       @default(0) @map("display_order")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  deletedAt       DateTime? @map("deleted_at")
+
+  resume MasterResume @relation(fields: [resumeId], references: [id])
+
+  @@index([resumeId])
+  @@map("skills")
+}
+
+model Language {
+  id           String    @id @default(uuid())
+  resumeId     String    @map("resume_id")
+  language     String
+  proficiency  String?
+  displayOrder Int       @default(0) @map("display_order")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  deletedAt    DateTime? @map("deleted_at")
+
+  resume MasterResume @relation(fields: [resumeId], references: [id])
+
+  @@index([resumeId])
+  @@map("languages")
+}
+
+model Certificate {
+  id             String    @id @default(uuid())
+  resumeId       String    @map("resume_id")
+  title          String
+  issuer         String?
+  issueDate      DateTime? @map("issue_date") @db.Date
+  expirationDate DateTime? @map("expiration_date") @db.Date
+  credentialId   String?   @map("credential_id")
+  credentialUrl  String?   @map("credential_url")
+  displayOrder   Int       @default(0) @map("display_order")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  deletedAt      DateTime? @map("deleted_at")
+
+  resume MasterResume @relation(fields: [resumeId], references: [id])
+
+  @@index([resumeId])
+  @@map("certificates")
+}
+
+model Project {
+  id           String    @id @default(uuid())
+  resumeId     String    @map("resume_id")
+  title        String
+  description  String?
+  url          String?
+  technologies String[]
+  displayOrder Int       @default(0) @map("display_order")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  deletedAt    DateTime? @map("deleted_at")
+
+  resume MasterResume @relation(fields: [resumeId], references: [id])
+
+  @@index([resumeId])
+  @@map("projects")
+}
+
+model Course {
+  id             String    @id @default(uuid())
+  resumeId       String    @map("resume_id")
+  title          String
+  provider       String?
+  hours          Int?
+  completionDate DateTime? @map("completion_date") @db.Date
+  displayOrder   Int       @default(0) @map("display_order")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  deletedAt      DateTime? @map("deleted_at")
+
+  resume MasterResume @relation(fields: [resumeId], references: [id])
+
+  @@index([resumeId])
+  @@map("courses")
+}
+
+/// Field list not specified in the Phase 2A brief (only listed as a section
+/// name) — using the standard, minimal fields for this well-known CV
+/// section type, consistent in shape with the adjacent Certificate section.
+model Award {
+  id           String    @id @default(uuid())
+  resumeId     String    @map("resume_id")
+  title        String
+  issuer       String?
+  dateAwarded  DateTime? @map("date_awarded") @db.Date
+  description  String?
+  displayOrder Int       @default(0) @map("display_order")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  deletedAt    DateTime? @map("deleted_at")
+
+  resume MasterResume @relation(fields: [resumeId], references: [id])
+
+  @@index([resumeId])
+  @@map("awards")
+}
+
+/// Field list not specified in the Phase 2A brief — see Award above for the
+/// same rationale.
+model Publication {
+  id              String    @id @default(uuid())
+  resumeId        String    @map("resume_id")
+  title           String
+  publisher       String?
+  publicationDate DateTime? @map("publication_date") @db.Date
+  url             String?
+  description     String?
+  displayOrder    Int       @default(0) @map("display_order")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  deletedAt       DateTime? @map("deleted_at")
+
+  resume MasterResume @relation(fields: [resumeId], references: [id])
+
+  @@index([resumeId])
+  @@map("publications")
+}
+
+/// Field list not specified in the Phase 2A brief — mirrors WorkExperience's
+/// shape (organization/role/dates/description), the closest analogous
+/// section type.
+model VolunteerExperience {
+  id                    String    @id @default(uuid())
+  resumeId              String    @map("resume_id")
+  organization          String
+  role                  String?
+  startDate             DateTime? @map("start_date") @db.Date
+  endDate               DateTime? @map("end_date") @db.Date
+  currentlyVolunteering Boolean   @default(false) @map("currently_volunteering")
+  description           String?
+  displayOrder          Int       @default(0) @map("display_order")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+  deletedAt             DateTime? @map("deleted_at")
+
+  resume MasterResume @relation(fields: [resumeId], references: [id])
+
+  @@index([resumeId])
+  @@map("volunteer_experiences")
+}
+
+model Reference {
+  id           String    @id @default(uuid())
+  resumeId     String    @map("resume_id")
+  name         String
+  position     String?
+  company      String?
+  email        String?
+  phone        String?
+  displayOrder Int       @default(0) @map("display_order")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  deletedAt    DateTime? @map("deleted_at")
+
+  resume MasterResume @relation(fields: [resumeId], references: [id])
+
+  @@index([resumeId])
+  @@map("references")
+}
+
+// ---------------------------------------------------------------------------
+// Job Target Engine (Phase 2B) — docs/architecture/master-resume-data-model.md §8
+//
+// A Job Target is a specific job opportunity the user is preparing for. It
+// sits between the Master Resume and everything AI-driven that will consume
+// it later (ATS analysis, resume optimization, cover letters, interview
+// prep): User -> Master Resume -> Job Target -> Resume Variant (future) ->
+// AI Optimization -> Application Tracking. This phase implements no AI —
+// job_target_analysis exists so a future AI phase has a ready table to
+// write into, and JobTargetAnalysisService's stub methods exist only to
+// stabilize that future interface (see the service file).
+// ---------------------------------------------------------------------------
+
+model JobTarget {
+  id             String          @id @default(uuid())
+  userId         String          @map("user_id")
+  title          String
+  company        String?
+  location       String?
+  employmentType String?         @map("employment_type")
+  seniority      String?
+  salaryMin      Decimal?        @map("salary_min") @db.Decimal(12, 2)
+  salaryMax      Decimal?        @map("salary_max") @db.Decimal(12, 2)
+  currency       String          @default("MZN")
+  // User-supplied, stored exactly as entered — never scraped, fetched, or
+  // parsed by the platform (see JobTargetAnalysisService).
+  jobUrl         String?         @map("job_url")
+  // Pasted vacancy text, stored as-is. No AI extraction in this phase.
+  jobDescription String?         @map("job_description")
+  source         String?
+  status         JobTargetStatus @default(DRAFT)
+  notes          String?
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  user         User                @relation(fields: [userId], references: [id])
+  keywords     JobTargetKeyword[]
+  skills       JobTargetSkill[]
+  languages    JobTargetLanguage[]
+  analysis     JobTargetAnalysis?
+  applications Application[]
+
+  @@index([userId])
+  @@map("job_targets")
+}
+
+model JobTargetKeyword {
+  id          String   @id @default(uuid())
+  jobTargetId String   @map("job_target_id")
+  keyword     String
+  weight      Int?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  jobTarget JobTarget @relation(fields: [jobTargetId], references: [id])
+
+  @@index([jobTargetId])
+  @@map("job_target_keywords")
+}
+
+model JobTargetSkill {
+  id          String   @id @default(uuid())
+  jobTargetId String   @map("job_target_id")
+  skill       String
+  required    Boolean  @default(false)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  jobTarget JobTarget @relation(fields: [jobTargetId], references: [id])
+
+  @@index([jobTargetId])
+  @@map("job_target_skills")
+}
+
+model JobTargetLanguage {
+  id          String   @id @default(uuid())
+  jobTargetId String   @map("job_target_id")
+  language    String
+  level       String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  jobTarget JobTarget @relation(fields: [jobTargetId], references: [id])
+
+  @@index([jobTargetId])
+  @@map("job_target_languages")
+}
+
+/// Prepared ahead of AI implementation (Phase 6+) — no row is written by
+/// this phase. One row per JobTarget, recomputed in place (not versioned,
+/// not soft-deleted) whenever a future AI phase runs analysis again.
+model JobTargetAnalysis {
+  id              String   @id @default(uuid())
+  jobTargetId     String   @unique @map("job_target_id")
+  atsScore        Int?     @map("ats_score")
+  keywordsMatched String[] @map("keywords_matched")
+  keywordsMissing String[] @map("keywords_missing")
+  experienceGap   String?  @map("experience_gap")
+  educationGap    String?  @map("education_gap")
+  summary         String?
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  jobTarget JobTarget @relation(fields: [jobTargetId], references: [id])
+
+  @@map("job_target_analysis")
+}
+
+/// One application for one Job Target. `resumeId` is a loose, unvalidated
+/// pointer (no FK) — Resume Variants don't exist yet, so there is nothing
+/// concrete to reference; the column exists only so Applications don't need
+/// a schema change once Resume Variants ship.
+model Application {
+  id            String            @id @default(uuid())
+  userId        String            @map("user_id")
+  jobTargetId   String            @map("job_target_id")
+  resumeId      String?           @map("resume_id")
+  status        ApplicationStatus @default(SAVED)
+  appliedAt     DateTime?         @map("applied_at")
+  interviewDate DateTime?         @map("interview_date")
+  result        String?
+  notes         String?
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  user      User      @relation(fields: [userId], references: [id])
+  jobTarget JobTarget @relation(fields: [jobTargetId], references: [id])
+
+  @@index([userId])
+  @@index([jobTargetId])
+  @@map("applications")
 }
 
 model AdminUser {

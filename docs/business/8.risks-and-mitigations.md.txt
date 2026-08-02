@@ -1,0 +1,69 @@
+# Risks
+
+Low adoption
+
+Mitigation
+
+Continuous user feedback.
+
+---
+
+AI costs
+
+Mitigation
+
+Credit system.
+
+Model abstraction.
+
+Caching.
+
+---
+
+Payment failures
+
+Mitigation
+
+Idempotency.
+
+Automatic refunds.
+
+Multiple providers.
+
+---
+
+Vendor lock-in
+
+Mitigation
+
+Provider abstraction.
+
+---
+
+Security
+
+Mitigation
+
+JWT.
+
+RBAC.
+
+Encryption.
+
+Audit logs.
+
+Regular testing.
+
+---
+
+Scalability
+
+Mitigation
+
+Microservice-ready architecture.
+
+Redis caching.
+
+Queue-based AI processing.
+
+Cloud storage.

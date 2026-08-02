@@ -2,6 +2,14 @@
 
 Status: resolved decision (approved 2026-07-30). Supersedes the earlier open question in [database-overview.md](database-overview.md) ("CV/CV-version content schema — not specified").
 
+> **Phase 2A note:** this document describes the future CV export/versioning model. It is **not
+> implemented** — the `Cv`/`CvVersion` tables exist in the Phase 0 schema but are dormant. As of
+> Phase 2A, professional data lives in the **Master Resume** (see
+> [master-resume-data-model.md](master-resume-data-model.md)), which is the single source of truth
+> going forward. When this CV model is eventually implemented, `CVVersion.content` will be
+> populated by filtering/snapshotting the Master Resume, not by separate user entry — see
+> [master-resume-data-model.md](master-resume-data-model.md) §5 for the full reconciliation.
+
 ## 1. Decision
 
 CVs use a **structured JSON document model**, stored as PostgreSQL `JSONB` via Prisma — **not** a separate relational table per CV section. This keeps the schema stable while section content evolves, and matches `prompts/10-business-rules.md` §10 (versioning) and `prompts/09-product-vision.md`'s requirement that the architecture support future expansion without redesign.
@@ -12,30 +20,30 @@ CVs use a **structured JSON document model**, stored as PostgreSQL `JSONB` via P
 
 The stable identity/pointer record for a user's CV.
 
-| Field | Notes |
-|---|---|
-| `id` | |
-| `user_id` | owner, FK → `users` |
-| `title` | user-facing name, e.g. "Frontend Developer CV" |
-| `template_id` | which rendering template is currently selected |
-| `current_version_id` | FK → `cv_versions`, the version considered "live" |
-| `status` | e.g. `DRAFT`, `PUBLISHED` |
+| Field                                      | Notes                                             |
+| ------------------------------------------ | ------------------------------------------------- |
+| `id`                                       |                                                   |
+| `user_id`                                  | owner, FK → `users`                               |
+| `title`                                    | user-facing name, e.g. "Frontend Developer CV"    |
+| `template_id`                              | which rendering template is currently selected    |
+| `current_version_id`                       | FK → `cv_versions`, the version considered "live" |
+| `status`                                   | e.g. `DRAFT`, `PUBLISHED`                         |
 | `created_at` / `updated_at` / `deleted_at` |
 
 `CV` itself holds **no section content** — content only exists inside `CVVersion` rows. This is what makes versioning and restore simple: "editing a CV" is "creating (or updating, per the autosave strategy) a `CVVersion` and repointing `current_version_id`."
 
 ### `CVVersion`
 
-| Field | Notes |
-|---|---|
-| `id` | |
-| `cv_id` | FK → `cvs` |
-| `version_number` | monotonically increasing per CV |
-| `schema_version` | version of the JSON document shape itself (see §4) |
-| `content` | `JSONB` — the structured CV document (§3) |
-| `created_by` | user or system (AI improvement writes a new version too) |
-| `change_summary` | optional, e.g. `"AI improvement: professional summary"` |
-| `created_at` |
+| Field            | Notes                                                    |
+| ---------------- | -------------------------------------------------------- |
+| `id`             |                                                          |
+| `cv_id`          | FK → `cvs`                                               |
+| `version_number` | monotonically increasing per CV                          |
+| `schema_version` | version of the JSON document shape itself (see §4)       |
+| `content`        | `JSONB` — the structured CV document (§3)                |
+| `created_by`     | user or system (AI improvement writes a new version too) |
+| `change_summary` | optional, e.g. `"AI improvement: professional summary"`  |
+| `created_at`     |
 
 `(cv_id, version_number)` is unique. Rows in `cv_versions` are never mutated after creation — restoring a previous version means creating a **new** version whose content is copied from the old one and repointing `current_version_id`, never rewriting history in place. This gives "restore" for free without a separate undo mechanism, and keeps the version table append-only (consistent with the ledger/audit-log philosophy applied elsewhere in this project).
 
@@ -47,14 +55,16 @@ Top-level structured sections, each independently optional so partial CVs are va
 {
   "personalInfo": { "fullName": "", "email": "", "phone": "", "location": "", "links": [] },
   "professionalSummary": { "text": "" },
-  "experience": [ { "company": "", "role": "", "startDate": "", "endDate": "", "current": false, "bullets": [] } ],
-  "education": [ { "institution": "", "degree": "", "field": "", "startDate": "", "endDate": "" } ],
-  "skills": [ { "name": "", "level": "" } ],
-  "languages": [ { "name": "", "level": "" } ],
-  "certifications": [ { "name": "", "issuer": "", "date": "" } ],
-  "projects": [ { "name": "", "description": "", "links": [] } ],
-  "references": [ { "name": "", "contact": "", "relationship": "" } ],
-  "customSections": [ { "title": "", "items": [] } ]
+  "experience": [
+    { "company": "", "role": "", "startDate": "", "endDate": "", "current": false, "bullets": [] }
+  ],
+  "education": [{ "institution": "", "degree": "", "field": "", "startDate": "", "endDate": "" }],
+  "skills": [{ "name": "", "level": "" }],
+  "languages": [{ "name": "", "level": "" }],
+  "certifications": [{ "name": "", "issuer": "", "date": "" }],
+  "projects": [{ "name": "", "description": "", "links": [] }],
+  "references": [{ "name": "", "contact": "", "relationship": "" }],
+  "customSections": [{ "title": "", "items": [] }]
 }
 ```
 
@@ -65,7 +75,7 @@ New section types are added by extending this document shape, not by adding tabl
 `CVVersion.schema_version` records which shape of the JSON document a given version was written against. When the document shape changes (new required subfield, renamed key), the backend:
 
 1. Bumps the current schema version constant.
-2. Applies a migration function when *reading* an older version for editing/rendering (transform-on-read), rather than bulk-rewriting historical `cv_versions` rows.
+2. Applies a migration function when _reading_ an older version for editing/rendering (transform-on-read), rather than bulk-rewriting historical `cv_versions` rows.
 
 This keeps old versions restorable and renderable even after the live schema evolves, without a data migration blocking every release.
 
@@ -89,4 +99,4 @@ Rejected alternative: a table per section (`cv_experience`, `cv_education`, …)
 - Sections have no independent query/filter requirements in the MVP (nothing searches "all experience entries across all CVs") that would justify relational modeling's benefits.
 - Versioning an entire CV is a single JSONB snapshot per version under this model; under a relational model it would require versioning N child tables in lockstep, which is materially more complex to keep atomic and restorable.
 
-If a future requirement needs to query *inside* a specific section across many CVs (e.g. "find all CVs mentioning skill X" for search/matching), PostgreSQL's native JSONB indexing (GIN index on `content`, or a generated column extracting a specific path) can be added without changing the storage model.
+If a future requirement needs to query _inside_ a specific section across many CVs (e.g. "find all CVs mentioning skill X" for search/matching), PostgreSQL's native JSONB indexing (GIN index on `content`, or a generated column extracting a specific path) can be added without changing the storage model.

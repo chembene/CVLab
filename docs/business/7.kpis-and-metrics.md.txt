@@ -1,0 +1,43 @@
+# KPIs
+
+Growth
+
+Monthly Active Users
+
+Daily Active Users
+
+Retention
+
+Conversion Rate
+
+Revenue
+
+Credits Purchased
+
+Credits Consumed
+
+Customer Lifetime Value
+
+Churn
+
+Average Resume Score
+
+Average ATS Score
+
+Interview Rate
+
+Offer Rate
+
+Average Applications per User
+
+Resume Versions Created
+
+AI Suggestions Accepted
+
+Interview Practices Completed
+
+Technical Tests Completed
+
+Customer Satisfaction
+
+Net Promoter Score

@@ -1,0 +1,78 @@
+# Pricing Strategy
+
+## Objective
+
+Create a pricing model that is simple, transparent, and affordable, while ensuring the long-term sustainability of the platform.
+
+---
+
+# Pricing Philosophy
+
+Users should only pay when they receive value.
+
+Credits are consumed only after successful processing.
+
+No hidden costs.
+
+No automatic charges.
+
+---
+
+# Initial Credit Packages
+
+| Package | Price (MT) | Credits |
+|----------|-----------:|--------:|
+| Starter | 100 MT | 200 |
+| Standard | 250 MT | 550 |
+| Professional | 500 MT | 1,200 |
+| Premium | 1,000 MT | 2,600 |
+
+Larger packages provide bonus credits.
+
+---
+
+# Initial Credit Costs
+
+| Feature | Credits |
+|----------|---------:|
+| AI Resume Suggestion | 30 |
+| ATS Analysis | 40 |
+| Cover Letter Generation | 40 |
+| Interview Practice | 60 |
+| Technical Test | 40 |
+| Resume Optimization | 80 |
+| AI Career Advice | 50 |
+
+These values must be configurable and never hardcoded.
+
+---
+
+# Refund Policy
+
+Credits are refunded automatically when:
+
+- AI processing fails.
+- Payment is reversed.
+- Internal server errors occur after credit reservation.
+
+Credits are never refunded after successful processing.
+
+---
+
+# Future Subscription Plans
+
+Potential subscription plans:
+
+- Free
+- Professional
+- Enterprise
+- University
+- NGO
+
+Subscriptions may include monthly credits and premium features.
+
+---
+
+# Design Principles
+
+Pricing should encourage long-term platform usage rather than one-time purchases.

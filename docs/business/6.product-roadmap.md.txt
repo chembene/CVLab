@@ -1,0 +1,61 @@
+# Product Roadmap
+
+## Phase 1
+
+Authentication
+
+Profile
+
+Master Resume
+
+Resume Sections
+
+---
+
+## Phase 2
+
+Job Target
+
+ATS Analysis
+
+Resume Optimization
+
+Cover Letters
+
+---
+
+## Phase 3
+
+Credit Engine
+
+Payments
+
+M-Pesa
+
+eMola
+
+---
+
+## Phase 4
+
+Interview Practice
+
+Technical Tests
+
+Career Dashboard
+
+Notifications
+
+---
+
+## Phase 5
+
+Recruiter Platform
+
+Company Dashboard
+
+Analytics
+
+Career Coach
+
+Marketplace

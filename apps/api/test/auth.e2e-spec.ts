@@ -2,7 +2,6 @@ import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { ThrottlerGuard } from '@nestjs/throttler';
 import { UserStatus } from '@prisma/client';
 import request from 'supertest';
 import { randomUUID } from 'node:crypto';
@@ -10,6 +9,7 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { REFRESH_COOKIE_NAME } from '../src/auth/auth.constants';
 import { bootstrapTestApp } from './utils/bootstrap-test-app';
+import { disableThrottlingForTests } from './utils/disable-throttling-for-tests';
 
 const PASSWORD = 'Sup3rSecret1';
 
@@ -34,28 +34,15 @@ describe('Auth (e2e)', () => {
   const testRunId = randomUUID().slice(0, 8);
   const emailFor = (label: string) => `auth-e2e-${testRunId}-${label}@example.com`;
 
-  // Test-side only — production ThrottlerModule config and the @Throttle()
-  // decorators on AuthController are completely untouched; nothing under
-  // src/ is modified. This suite fires many register/login calls
-  // back-to-back across ~30 cases, which legitimately trips the real
-  // per-minute limits — the guard itself (rate limiting works) is not what
-  // these tests are about.
-  //
-  // ThrottlerGuard is registered globally via the APP_GUARD token in
-  // AppModule, not via a per-route @UseGuards() decorator. Neither
-  // `.overrideGuard(ThrottlerGuard)` nor `.overrideProvider(APP_GUARD)`
-  // from @nestjs/testing actually intercepts it in that configuration (both
-  // were tried and verified, via the real ThrottlerGuard.canActivate still
-  // appearing in thrown-exception stack traces, to leave the real guard
-  // running) — a known limitation of Nest's global-guard DI wiring.
-  // Patching the prototype method directly works regardless of how the
-  // instance was constructed/injected, and is scoped to this test file only
-  // (Jest gives each test file its own module registry, so this never
-  // leaks into health.e2e-spec.ts or any other suite).
+  // This suite fires many register/login calls back-to-back across ~30
+  // cases, which legitimately trips the real per-minute rate limits — see
+  // disableThrottlingForTests for why a prototype spy is used instead of
+  // NestJS's testing-module override APIs (both were tried and don't work
+  // for an APP_GUARD-registered global guard).
   let throttlerSpy: jest.SpyInstance;
 
   beforeAll(async () => {
-    throttlerSpy = jest.spyOn(ThrottlerGuard.prototype, 'canActivate').mockResolvedValue(true);
+    throttlerSpy = disableThrottlingForTests();
 
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     app = await bootstrapTestApp(moduleRef);
