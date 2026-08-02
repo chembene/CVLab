@@ -3,7 +3,7 @@ import type { Application, ApplicationStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface ApplicationData {
-  resumeId?: string;
+  resumeVariantId?: string;
   status?: ApplicationStatus;
   appliedAt?: Date;
   interviewDate?: Date;

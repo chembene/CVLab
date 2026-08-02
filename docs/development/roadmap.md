@@ -67,6 +67,26 @@ after a Credit Engine exists, regardless of which document's phase numbering is 
 pass should pick one authoritative phase-numbering document (or explicitly merge them) before
 starting the next phase.
 
+## Phase 3 (as implemented) — Resume Variants Engine
+
+Continuing the session's own informal 2A/2B/3 numbering (not a label from either source roadmap
+document — see above), Phase 3 built the **Resume Variants Engine**: independent, per-Job-Target
+copies of the Master Resume (`resume_variants`), plus wiring `Application.resumeVariantId` to a
+real, ownership-verified FK. Full detail in
+[master-resume-data-model.md](../architecture/master-resume-data-model.md) §9.
+
+This does not correspond to **either** document's "Phase 3": `prompts/14-development-roadmap.md`'s
+Phase 3 is Credit Engine; `docs/business/6.product-roadmap.md.txt`'s Phase 3 is Credit
+Engine/Payments/M-Pesa/eMola. Resume Variants is a natural continuation of the Job Target flow this
+session already established (Master Resume → Job Target → **Resume Variant** → AI Optimization →
+Application Tracking, per [master-resume-data-model.md](../architecture/master-resume-data-model.md)
+§8's diagram) and, like Phase 2B, stays scoped to data-model/CRUD only — no AI, ATS, Export, or
+Credits, matching this document's own Phase 3/4-before-Phase-6 sequencing rule (nothing here
+consumes credits, so nothing here needed to wait for a Credit Engine). The same recommendation
+stands: **pick one authoritative phase-numbering document before the next phase**, since the
+informal numbering used across this session (2A → 2B → 3) does not map cleanly onto either source
+document's own Phase 3+.
+
 ## Phase 0 Readiness
 
 As of this pass, the open architectural questions that would have blocked confident Phase 0 scaffolding are resolved: `prompts/` path structure, CV data model, test retake policy, AI request tracking, credit-failure/refund rule, soft-delete scope, admin MFA extensibility, token storage, PII classification/retention, payment provider abstraction, credit/payment separation, domain events, full database entity list, and credit package/feature pricing configuration. See the architecture assessment for the full resolution list. Phase 0 (repo scaffolding, TypeScript/lint/format config, Prisma+PostgreSQL wiring, Docker, test runner config) can now begin without further product decisions blocking it.

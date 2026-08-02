@@ -6,6 +6,7 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { bootstrapTestApp } from './utils/bootstrap-test-app';
 import { disableThrottlingForTests } from './utils/disable-throttling-for-tests';
+import { waitForHistoryEventTypes } from './utils/wait-for-history-events';
 
 /**
  * Covers the Phase 2B Job Target Engine end-to-end against the real
@@ -389,11 +390,12 @@ describe('Job Target Engine (e2e)', () => {
         .set(auth(accessToken))
         .send({ status: 'APPLIED' });
 
-      const events = await prisma.historyEvent.findMany({
-        where: { userId },
-        orderBy: { createdAt: 'asc' },
-      });
-      const eventTypes = events.map((e) => e.eventType);
+      const eventTypes = await waitForHistoryEventTypes(prisma, userId, [
+        'job_target_created',
+        'job_target_archived',
+        'application_created',
+        'application_status_changed',
+      ]);
 
       expect(eventTypes).toContain('job_target_created');
       expect(eventTypes).toContain('job_target_archived');

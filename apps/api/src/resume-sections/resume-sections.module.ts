@@ -34,5 +34,10 @@ import { ReferenceController } from './controllers/reference.controller';
     ReferenceController,
   ],
   providers: [ResumeSectionsRepository, ResumeSectionsService],
+  // ResumeSectionsRepository is exported so ResumeVariantModule (Phase 3)
+  // can read all 11 live section types when building a Resume Variant's
+  // content snapshot — it needs raw section data, not the section-mutation
+  // business logic in ResumeSectionsService.
+  exports: [ResumeSectionsRepository],
 })
 export class ResumeSectionsModule {}

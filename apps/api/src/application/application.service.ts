@@ -8,6 +8,7 @@ import {
 } from '../common/events/resume-entity-changed.event';
 import type { RequestUser } from '../auth/interfaces/request-with-user.interface';
 import { JobTargetService } from '../job-target/job-target.service';
+import { ResumeVariantService } from '../resume-variant/resume-variant.service';
 import { ApplicationRepository } from './application.repository';
 import type { CreateApplicationDto } from './dto/create-application.dto';
 import type { UpdateApplicationDto } from './dto/update-application.dto';
@@ -20,6 +21,7 @@ export class ApplicationService {
   constructor(
     private readonly applicationRepository: ApplicationRepository,
     private readonly jobTargetService: JobTargetService,
+    private readonly resumeVariantService: ResumeVariantService,
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
@@ -34,8 +36,16 @@ export class ApplicationService {
     dto: CreateApplicationDto,
   ): Promise<Application> {
     assertOwnerOrAdmin(requestingUser, targetUserId);
-    // A user may only create an application against a job target they own.
+    // A user may only create an application against a job target they own,
+    // and — when provided — a resume variant they own.
     await this.jobTargetService.assertOwnedJobTarget(requestingUser, targetUserId, dto.jobTargetId);
+    if (dto.resumeVariantId) {
+      await this.resumeVariantService.assertOwnedVariant(
+        requestingUser,
+        targetUserId,
+        dto.resumeVariantId,
+      );
+    }
 
     const { jobTargetId, appliedAt, interviewDate, ...rest } = dto;
     const application = await this.applicationRepository.create(targetUserId, jobTargetId, {
@@ -56,6 +66,13 @@ export class ApplicationService {
   ): Promise<Application> {
     assertOwnerOrAdmin(requestingUser, targetUserId);
     const existing = await this.findOwnedOrThrow(targetUserId, id);
+    if (dto.resumeVariantId) {
+      await this.resumeVariantService.assertOwnedVariant(
+        requestingUser,
+        targetUserId,
+        dto.resumeVariantId,
+      );
+    }
 
     const { appliedAt, interviewDate, ...rest } = dto;
     const updated = await this.applicationRepository.update(id, {

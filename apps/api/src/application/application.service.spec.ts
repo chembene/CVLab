@@ -3,11 +3,13 @@ import { ApplicationStatus, UserRole } from '@prisma/client';
 import { ApplicationService } from './application.service';
 import type { ApplicationRepository } from './application.repository';
 import type { JobTargetService } from '../job-target/job-target.service';
+import type { ResumeVariantService } from '../resume-variant/resume-variant.service';
 import type { RequestUser } from '../auth/interfaces/request-with-user.interface';
 
 describe('ApplicationService', () => {
   let repository: jest.Mocked<ApplicationRepository>;
   let jobTargetService: jest.Mocked<JobTargetService>;
+  let resumeVariantService: jest.Mocked<ResumeVariantService>;
   let eventEmitter: { emit: jest.Mock };
   let service: ApplicationService;
 
@@ -25,9 +27,17 @@ describe('ApplicationService', () => {
     jobTargetService = {
       assertOwnedJobTarget: jest.fn(),
     } as unknown as jest.Mocked<JobTargetService>;
+    resumeVariantService = {
+      assertOwnedVariant: jest.fn(),
+    } as unknown as jest.Mocked<ResumeVariantService>;
     eventEmitter = { emit: jest.fn() };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    service = new ApplicationService(repository, jobTargetService, eventEmitter as any);
+    service = new ApplicationService(
+      repository,
+      jobTargetService,
+      resumeVariantService,
+      eventEmitter as any,
+    );
   });
 
   describe('list', () => {
@@ -65,6 +75,43 @@ describe('ApplicationService', () => {
         service.create(owner, 'user-1', { jobTargetId: 'someone-elses-jt' } as never),
       ).rejects.toBeInstanceOf(NotFoundException);
       expect(repository.create).not.toHaveBeenCalled();
+    });
+
+    it('verifies resume variant ownership when resumeVariantId is provided', async () => {
+      jobTargetService.assertOwnedJobTarget.mockResolvedValue({ id: 'jt-1' } as never);
+      resumeVariantService.assertOwnedVariant.mockResolvedValue({ id: 'rv-1' } as never);
+      repository.create.mockResolvedValue({ id: 'app-1' } as never);
+
+      await service.create(owner, 'user-1', {
+        jobTargetId: 'jt-1',
+        resumeVariantId: 'rv-1',
+      } as never);
+
+      expect(resumeVariantService.assertOwnedVariant).toHaveBeenCalledWith(owner, 'user-1', 'rv-1');
+    });
+
+    it('does not create when the referenced resume variant is not owned by the target user', async () => {
+      jobTargetService.assertOwnedJobTarget.mockResolvedValue({ id: 'jt-1' } as never);
+      resumeVariantService.assertOwnedVariant.mockRejectedValue(
+        new NotFoundException('Resume variant not found.'),
+      );
+
+      await expect(
+        service.create(owner, 'user-1', {
+          jobTargetId: 'jt-1',
+          resumeVariantId: 'someone-elses-rv',
+        } as never),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(repository.create).not.toHaveBeenCalled();
+    });
+
+    it('skips resume variant ownership check when resumeVariantId is absent', async () => {
+      jobTargetService.assertOwnedJobTarget.mockResolvedValue({ id: 'jt-1' } as never);
+      repository.create.mockResolvedValue({ id: 'app-1' } as never);
+
+      await service.create(owner, 'user-1', { jobTargetId: 'jt-1' } as never);
+
+      expect(resumeVariantService.assertOwnedVariant).not.toHaveBeenCalled();
     });
   });
 

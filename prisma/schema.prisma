@@ -132,6 +132,7 @@ model User {
   masterResume        MasterResume?
   jobTargets          JobTarget[]
   applications        Application[]
+  resumeVariants      ResumeVariant[]
   cvs                 Cv[]
   wallet              CreditWallet?
   creditTransactions  CreditTransaction[]
@@ -245,6 +246,7 @@ model MasterResume {
   publications         Publication[]
   volunteerExperiences VolunteerExperience[]
   references           Reference[]
+  resumeVariants       ResumeVariant[]
 
   @@map("master_resumes")
 }
@@ -506,12 +508,13 @@ model JobTarget {
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
-  user         User                @relation(fields: [userId], references: [id])
-  keywords     JobTargetKeyword[]
-  skills       JobTargetSkill[]
-  languages    JobTargetLanguage[]
-  analysis     JobTargetAnalysis?
-  applications Application[]
+  user           User                @relation(fields: [userId], references: [id])
+  keywords       JobTargetKeyword[]
+  skills         JobTargetSkill[]
+  languages      JobTargetLanguage[]
+  analysis       JobTargetAnalysis?
+  applications   Application[]
+  resumeVariants ResumeVariant[]
 
   @@index([userId])
   @@map("job_targets")
@@ -576,30 +579,79 @@ model JobTargetAnalysis {
   @@map("job_target_analysis")
 }
 
-/// One application for one Job Target. `resumeId` is a loose, unvalidated
-/// pointer (no FK) — Resume Variants don't exist yet, so there is nothing
-/// concrete to reference; the column exists only so Applications don't need
-/// a schema change once Resume Variants ship.
-model Application {
-  id            String            @id @default(uuid())
-  userId        String            @map("user_id")
-  jobTargetId   String            @map("job_target_id")
-  resumeId      String?           @map("resume_id")
-  status        ApplicationStatus @default(SAVED)
-  appliedAt     DateTime?         @map("applied_at")
-  interviewDate DateTime?         @map("interview_date")
-  result        String?
-  notes         String?
+// ---------------------------------------------------------------------------
+// Resume Variants Engine (Phase 3) — docs/architecture/master-resume-data-model.md §9
+//
+// A Resume Variant is an independent copy of the Master Resume, optionally
+// tailored for one Job Target. Creating one snapshots the Master Resume's
+// own fields + all 11 sections into `content` (Json) at that instant; after
+// that, editing the Master Resume never touches existing Variants and
+// editing a Variant never touches the Master Resume — see the doc for why
+// this is a JSONB snapshot rather than 11 more relational "variant section"
+// tables (no per-section endpoints were requested; a second full CRUD
+// engine would be scope well beyond "prepare, don't over-build").
+// ---------------------------------------------------------------------------
+
+model ResumeVariant {
+  id             String  @id @default(uuid())
+  userId         String  @map("user_id")
+  masterResumeId String  @map("master_resume_id")
+  jobTargetId    String? @map("job_target_id")
+
+  title                String
+  // Edit counter, not a version-history table — bumped by every content
+  // edit (PUT), not by archive/restore. A future phase can add real
+  // version history (mirroring CvVersion) without changing this column.
+  version              Int     @default(1)
+  // Open string, not a closed enum — same rationale as MasterResume.status.
+  status               String  @default("DRAFT")
+  // Distinct from soft-delete: archived = hidden-but-still-active,
+  // deletedAt = removed. Archive/Restore toggle this; Delete sets deletedAt.
+  archived             Boolean @default(false)
+  // Recomputed server-side on create/duplicate/content-edit — never
+  // accepted as client input. See ResumeVariantService.
+  completionPercentage Int     @map("completion_percentage")
+  content              Json
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
-  user      User      @relation(fields: [userId], references: [id])
-  jobTarget JobTarget @relation(fields: [jobTargetId], references: [id])
+  user         User          @relation(fields: [userId], references: [id])
+  masterResume MasterResume  @relation(fields: [masterResumeId], references: [id])
+  jobTarget    JobTarget?    @relation(fields: [jobTargetId], references: [id])
+  applications Application[]
+
+  @@index([userId])
+  @@index([masterResumeId])
+  @@index([jobTargetId])
+  @@map("resume_variants")
+}
+
+/// One application for one Job Target. `resumeVariantId` is nullable — an
+/// application can exist before a tailored variant has been created for it.
+model Application {
+  id              String            @id @default(uuid())
+  userId          String            @map("user_id")
+  jobTargetId     String            @map("job_target_id")
+  resumeVariantId String?           @map("resume_variant_id")
+  status          ApplicationStatus @default(SAVED)
+  appliedAt       DateTime?         @map("applied_at")
+  interviewDate   DateTime?         @map("interview_date")
+  result          String?
+  notes           String?
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  user          User           @relation(fields: [userId], references: [id])
+  jobTarget     JobTarget      @relation(fields: [jobTargetId], references: [id])
+  resumeVariant ResumeVariant? @relation(fields: [resumeVariantId], references: [id])
 
   @@index([userId])
   @@index([jobTargetId])
+  @@index([resumeVariantId])
   @@map("applications")
 }
 

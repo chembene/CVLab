@@ -13,6 +13,7 @@ import { ProfileModule } from './profile/profile.module';
 import { MasterResumeModule } from './master-resume/master-resume.module';
 import { ResumeSectionsModule } from './resume-sections/resume-sections.module';
 import { JobTargetModule } from './job-target/job-target.module';
+import { ResumeVariantModule } from './resume-variant/resume-variant.module';
 import { ApplicationModule } from './application/application.module';
 
 @Module({
@@ -37,6 +38,7 @@ import { ApplicationModule } from './application/application.module';
     MasterResumeModule,
     ResumeSectionsModule,
     JobTargetModule,
+    ResumeVariantModule,
     ApplicationModule,
   ],
   providers: [

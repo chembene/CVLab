@@ -6,6 +6,7 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { bootstrapTestApp } from './utils/bootstrap-test-app';
 import { disableThrottlingForTests } from './utils/disable-throttling-for-tests';
+import { waitForHistoryEventTypes } from './utils/wait-for-history-events';
 
 /**
  * Covers the Phase 2A Resume Engine foundation end-to-end against the real
@@ -431,11 +432,11 @@ describe('Resume Engine (e2e)', () => {
         .set(auth(accessToken))
         .send({ name: 'Kotlin' });
 
-      const events = await prisma.historyEvent.findMany({
-        where: { userId },
-        orderBy: { createdAt: 'asc' },
-      });
-      const eventTypes = events.map((e) => e.eventType);
+      const eventTypes = await waitForHistoryEventTypes(prisma, userId, [
+        'profile_created',
+        'master_resume_created',
+        'skill_created',
+      ]);
 
       expect(eventTypes).toContain('profile_created');
       expect(eventTypes).toContain('master_resume_created');

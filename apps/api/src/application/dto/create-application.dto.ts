@@ -6,12 +6,12 @@ export class CreateApplicationDto {
   @IsNotEmpty()
   jobTargetId!: string;
 
-  // No FK yet — Resume Variants don't exist. See prisma/schema.prisma's
-  // Application model comment.
+  // Optional — an application can exist before a tailored variant has been
+  // created for it. When present, must be a Resume Variant the same user
+  // owns (verified by ApplicationService via ResumeVariantService).
   @IsOptional()
   @IsString()
-  @MaxLength(100)
-  resumeId?: string;
+  resumeVariantId?: string;
 
   @IsOptional()
   @IsEnum(ApplicationStatus)
