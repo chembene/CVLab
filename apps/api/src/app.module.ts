@@ -15,6 +15,7 @@ import { ResumeSectionsModule } from './resume-sections/resume-sections.module';
 import { JobTargetModule } from './job-target/job-target.module';
 import { ResumeVariantModule } from './resume-variant/resume-variant.module';
 import { ApplicationModule } from './application/application.module';
+import { AtsModule } from './ats/ats.module';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { ApplicationModule } from './application/application.module';
     JobTargetModule,
     ResumeVariantModule,
     ApplicationModule,
+    AtsModule,
   ],
   providers: [
     {

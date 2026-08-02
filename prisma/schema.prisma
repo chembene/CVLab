@@ -133,6 +133,7 @@ model User {
   jobTargets          JobTarget[]
   applications        Application[]
   resumeVariants      ResumeVariant[]
+  atsReports          AtsReport[]
   cvs                 Cv[]
   wallet              CreditWallet?
   creditTransactions  CreditTransaction[]
@@ -515,6 +516,7 @@ model JobTarget {
   analysis       JobTargetAnalysis?
   applications   Application[]
   resumeVariants ResumeVariant[]
+  atsReports     AtsReport[]
 
   @@index([userId])
   @@map("job_targets")
@@ -621,6 +623,7 @@ model ResumeVariant {
   masterResume MasterResume  @relation(fields: [masterResumeId], references: [id])
   jobTarget    JobTarget?    @relation(fields: [jobTargetId], references: [id])
   applications Application[]
+  atsReports   AtsReport[]
 
   @@index([userId])
   @@index([masterResumeId])
@@ -653,6 +656,59 @@ model Application {
   @@index([jobTargetId])
   @@index([resumeVariantId])
   @@map("applications")
+}
+
+// ---------------------------------------------------------------------------
+// ATS Analysis Engine (Phase 4) — docs/architecture/module-boundaries.md
+//
+// Fully deterministic, rule-based comparison of one Resume Variant against
+// its linked Job Target — no AI/OpenAI involved anywhere in this table or
+// the service that writes to it. "Never overwrite reports. Always create a
+// new one." (brief, verbatim) makes this an append-only-by-convention log,
+// one row per POST /ats/run call — closer in spirit to `ai_requests` than
+// to a soft-deletable entity. DELETE /ats/reports/:id is therefore a real,
+// physical delete (no deleted_at column) — a disclosed, deliberate
+// resolution of the brief's explicit field list (no deletedAt requested)
+// against the project's general soft-delete rule: an ATS report is a
+// disposable, freely re-runnable computed analysis, not source-of-truth
+// user data, so permanently removing one carries none of the data-loss risk
+// the soft-delete rule exists to prevent.
+// ---------------------------------------------------------------------------
+
+model AtsReport {
+  id              String @id @default(uuid())
+  userId          String @map("user_id")
+  resumeVariantId String @map("resume_variant_id")
+  jobTargetId     String @map("job_target_id")
+
+  overallScore    Int @map("overall_score")
+  keywordScore    Int @map("keyword_score")
+  skillsScore     Int @map("skills_score")
+  experienceScore Int @map("experience_score")
+  educationScore  Int @map("education_score")
+  languageScore   Int @map("language_score")
+  formattingScore Int @map("formatting_score")
+  completionScore Int @map("completion_score")
+
+  matchedKeywords   String[] @map("matched_keywords")
+  missingKeywords   String[] @map("missing_keywords")
+  recommendedSkills String[] @map("recommended_skills")
+  recommendations   String[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  // Present per the brief's explicit field list; in practice always equal
+  // to createdAt — no repository method ever updates a report in place
+  // ("never overwrite ... always create a new one").
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user          User          @relation(fields: [userId], references: [id])
+  resumeVariant ResumeVariant @relation(fields: [resumeVariantId], references: [id])
+  jobTarget     JobTarget     @relation(fields: [jobTargetId], references: [id])
+
+  @@index([userId])
+  @@index([resumeVariantId])
+  @@index([jobTargetId])
+  @@map("ats_reports")
 }
 
 model AdminUser {

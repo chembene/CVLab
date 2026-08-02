@@ -87,6 +87,27 @@ stands: **pick one authoritative phase-numbering document before the next phase*
 informal numbering used across this session (2A → 2B → 3) does not map cleanly onto either source
 document's own Phase 3+.
 
+## Phase 4 (as implemented) — ATS Analysis Engine
+
+Continuing the session's informal 2A/2B/3/4 numbering, Phase 4 built a **fully deterministic ATS
+Analysis Engine** (`ats_reports`) comparing a Resume Variant against its linked Job Target —
+keyword/skill/education/language/experience matching, formatting/duplicate/empty-section
+detection, configurable weighted scoring, rule-based recommendations. **No AI/OpenAI, no credit
+consumption** — explicitly excluded by the brief, and correctly so: this document's own Phase 3/4
+sequencing note (Credits before anything charges credits) only applies to features that actually
+consume credits, and this one doesn't.
+
+This is the first phase to touch what `docs/business/6.product-roadmap.md.txt` calls "Phase 2:
+... ATS Analysis ..." (previously deferred in the Phase 2B note above, since AI-driven ATS analysis
+requires a Credit Engine first) — resolved by building the **deterministic, rule-based half only**.
+`JobTargetAnalysisService.calculateATS()` (Phase 2B stub) remains unimplemented and unrelated to
+this engine; a future AI-driven ATS pass, if one is ever added on top of this deterministic one,
+would need its own credit-consumption wiring and is out of this phase's scope entirely.
+
+Same standing recommendation: **pick one authoritative phase-numbering document** — the informal
+2A→2B→3→4 numbering used across this session still doesn't map cleanly onto either source
+document's own phase numbers.
+
 ## Phase 0 Readiness
 
 As of this pass, the open architectural questions that would have blocked confident Phase 0 scaffolding are resolved: `prompts/` path structure, CV data model, test retake policy, AI request tracking, credit-failure/refund rule, soft-delete scope, admin MFA extensibility, token storage, PII classification/retention, payment provider abstraction, credit/payment separation, domain events, full database entity list, and credit package/feature pricing configuration. See the architecture assessment for the full resolution list. Phase 0 (repo scaffolding, TypeScript/lint/format config, Prisma+PostgreSQL wiring, Docker, test runner config) can now begin without further product decisions blocking it.
