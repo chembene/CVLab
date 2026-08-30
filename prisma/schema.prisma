@@ -291,6 +291,7 @@ model User {
   coverLetters                 CoverLetter[]
   interviewSessions            InterviewSession[]
   careerAdvices                CareerAdvice[]
+  linkedInProfiles             LinkedInProfile[]
   cvImports                    CvImport[]
   applicationPipelineSessions  ApplicationPipelineSession[]
   exportedDocuments            ExportedDocument[]
@@ -1536,6 +1537,50 @@ model CareerAdvice {
   @@index([userId])
   @@index([userId, createdAt])
   @@map("career_advice")
+}
+
+// ---------------------------------------------------------------------------
+// LinkedIn / Professional Profile Engine (docs/architecture/linkedin-engine.md, FASE 19)
+// ---------------------------------------------------------------------------
+
+model LinkedInProfile {
+  id     String  @id @default(uuid())
+  userId String  @map("user_id")
+  // Free-text, optional — the role the generated profile should be angled
+  // toward. Never required: when absent, the prompt falls back to the most
+  // recent Job Target (if any) or general optimization. Stored verbatim,
+  // never inferred/reconstructed on read.
+  targetRole String? @map("target_role")
+
+  // The AI's structured response, typed columns — same convention as
+  // CareerAdvice/CoverLetter/AtsReport (explicit columns over one Json blob).
+  headline              String
+  about                 String
+  skills                String[]
+  experienceSuggestions String[] @map("experience_suggestions")
+  recommendations       String[]
+
+  // Lightweight record of which optional data sources fed this generation
+  // (booleans/counts only, e.g. {"hasMasterResume":true,"jobTargetsCount":1})
+  // — never the resume/job target content itself, which already lives in
+  // its own tables and can be read again when needed. Same rationale as
+  // CareerAdvice.contextSnapshot.
+  contextSnapshot Json? @map("context_snapshot")
+  // Snapshot of what CreditService.spendAndExecute() actually charged for
+  // this row — never recomputed from feature_pricing after the fact.
+  creditsUsed     Int   @default(0) @map("credits_used")
+  // Loose pointer to the matching AiRequest row, never a FK — AiRequest
+  // itself never stores the actual generated text, only technical/billing
+  // metadata, so this table is the sole place the generated content lives.
+  aiRequestId     String? @map("ai_request_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([userId, createdAt])
+  @@map("linkedin_profiles")
 }
 
 // ---------------------------------------------------------------------------

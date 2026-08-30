@@ -688,6 +688,52 @@ Admin Dashboard scope); every e2e spec instead creates and tears down its own te
 `cover-letter.e2e-spec.ts`'s precedent. Full design in
 [career-advisor-engine.md](../architecture/career-advisor-engine.md).
 
+## Phase LinkedIn / Professional Profile Engine (as implemented)
+
+Audited read-only before implementation ("AUDITORIA — FASE 19: LinkedIn / Professional Profile Engine"), then
+approved on a single pricing decision and built exactly to that approval. The audit's finding: `AIFeature.LINKEDIN`
+existed only as a reserved enum key with **zero usage anywhere in the codebase** — not even as arbitrary
+test-fixture data, unlike Career Advisor's "15" before FASE 18. `Profile.linkedin` (a plain URL field) and
+`job-import/parsers/linkedin.parser.ts` (parses job postings scraped _from_ LinkedIn) were both confirmed
+unrelated — no partial implementation existed to reuse or complete.
+
+**Pricing decision**: 30 credits, a real business decision made in this phase — no prior value existed to
+inherit. Persistence, `DummyAIProvider` extension, and context scope followed directly from precedent
+(Career Advisor, FASE 18) without needing separate approval: a new `LinkedInProfile` table (same rationale as
+`CareerAdvice` — `AiRequest` stores no content, and the required `GET` endpoints need somewhere real to read
+from), `DummyAIProvider`'s envelope gaining 4 new fields (`headline`/`about`/`skills`/`experienceSuggestions`,
+reusing `recommendations` as-is), migration `20260830124237_linkedin_engine`, purely additive.
+
+Context is deliberately **narrower** than Career Advisor's 8-module reach — only Profile, Master Resume, 3
+resume sections, and Job Targets (4 modules), matching this feature's own briefed scope. A considered-but-declined
+option: feeding a user's Career Advisor history in as extra context — no precedent exists in this codebase for
+one AI feature consuming another's persisted output as prompt input, and Career Advisor itself derives from the
+same raw data LinkedIn already reads directly, so wiring it in would add coupling without a clear benefit.
+Explicitly out of scope, per the brief: LinkedIn OAuth, real API integration, automatic publication, scraping,
+messaging, recruiter-connection automation — this phase is content generation only.
+
+Frontend: a new `/dashboard/linkedin` page — an optional target-role input (unlike Career Advisor, no mandatory
+free-text field, so the generate button is only disabled on insufficient balance), a live credit-cost indicator
+(reusing the existing `useCreditEstimate()` hook from `lib/api/career-advisor.ts` rather than duplicating it),
+the structured response, and a history list. `lib/api/linkedin.ts` adds `useLinkedInProfileHistory()`/
+`useGenerateLinkedInProfile()` following the exact same shape as Career Advisor's client.
+
+Quality gate: backend unit **1044/1044** (38 new — prompt builder, response parser, repository, service,
+controller), backend e2e `linkedin.e2e-spec.ts` **10/10** (happy path with/without target role, with/without
+Master Resume context, insufficient balance, AiRequest tracking, invalid-JSON refund, idempotency integration,
+ownership, admin bypass), confirmed with zero regression against `ai-orchestration`/`cover-letter`/`interview`/
+`resume-optimization`/`career-advisor` (the 5 e2e specs that touch either `PromptRegistry` or `DummyAIProvider`,
+both modified this phase) run together (82/82). A full 20-suite e2e run showed the same pre-existing,
+already-documented cross-suite flakiness first disclosed in the Payments & Credits phase and reconfirmed in
+FASE 18 (`feature_pricing` unique-constraint collisions and generic timeouts under sustained `--runInBand`
+load) — 2 unrelated suites (`cover-letter`, `cv-import`) failed in that run and both passed cleanly (27/27)
+when re-run standalone immediately after; `linkedin.e2e-spec.ts` itself passed in every single run, including
+inside the full suite. Frontend **9/9 new** (loading, empty state, history rendering, insufficient balance,
+successful generation with/without target role, error state, navigation entry), full frontend suite
+**213/215** (same 2 pre-existing, unrelated `IntersectionObserver` failures), typecheck/lint clean across both
+apps, `nest build`/`next build` clean. Full design in
+[linkedin-engine.md](../architecture/linkedin-engine.md).
+
 ## Phase 0 Readiness
 
 As of this pass, the open architectural questions that would have blocked confident Phase 0 scaffolding are resolved: `prompts/` path structure, CV data model, test retake policy, AI request tracking, credit-failure/refund rule, soft-delete scope, admin MFA extensibility, token storage, PII classification/retention, payment provider abstraction, credit/payment separation, domain events, full database entity list, and credit package/feature pricing configuration. See the architecture assessment for the full resolution list. Phase 0 (repo scaffolding, TypeScript/lint/format config, Prisma+PostgreSQL wiring, Docker, test runner config) can now begin without further product decisions blocking it.

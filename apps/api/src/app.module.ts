@@ -31,6 +31,7 @@ import { ExportModule } from './export/export.module';
 import { ApplicationPipelineModule } from './application-pipeline/application-pipeline.module';
 import { PaymentsModule } from './payments/payments.module';
 import { CareerAdvisorModule } from './career-advisor/career-advisor.module';
+import { LinkedInModule } from './linkedin/linkedin.module';
 
 @Module({
   imports: [
@@ -72,6 +73,7 @@ import { CareerAdvisorModule } from './career-advisor/career-advisor.module';
     ApplicationPipelineModule,
     PaymentsModule,
     CareerAdvisorModule,
+    LinkedInModule,
   ],
   providers: [
     {

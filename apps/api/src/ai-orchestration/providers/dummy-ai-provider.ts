@@ -103,7 +103,9 @@ export class DummyAIProvider implements AIProvider {
    * `title`/`coverLetter`/`summary`, Interview Preparation's `questions`/
    * `evaluations` — Phase 9's two array fields are sized dynamically via
    * `extractArrayCount()`, Career Advisor's `currentAssessment`/`strengths`/
-   * `gaps`/`recommendations`/`nextSteps` — FASE 18, everything else stays
+   * `gaps`/`recommendations`/`nextSteps` — FASE 18, LinkedIn's `headline`/
+   * `about`/`skills`/`experienceSuggestions` — FASE 19, reusing
+   * `recommendations` as-is, everything else stays
    * fixed-shape), so DummyAIProvider never needs to learn which feature is
    * asking — each feature's own response parser reads only the fields it
    * cares about and ignores the rest.
@@ -152,6 +154,14 @@ export class DummyAIProvider implements AIProvider {
       gaps: [`Deterministic dummy gap (hash ${hash.slice(0, 8)}).`],
       recommendations: [`Deterministic dummy recommendation (hash ${hash.slice(0, 8)}).`],
       nextSteps: [`Deterministic dummy next step (hash ${hash.slice(0, 8)}).`],
+      // FASE 19 — LinkedIn's ParsedLinkedInProfileResponse shape. `recommendations`
+      // above is reused as-is (already a string[], same field name/shape).
+      headline: `Deterministic dummy headline (hash ${hash.slice(0, 12)}).`,
+      about: `Deterministic dummy About section (hash ${hash.slice(0, 12)}).`,
+      skills: [`Deterministic dummy skill (hash ${hash.slice(0, 8)}).`],
+      experienceSuggestions: [
+        `Deterministic dummy experience suggestion (hash ${hash.slice(0, 8)}).`,
+      ],
     };
     return JSON.stringify(payload);
   }
