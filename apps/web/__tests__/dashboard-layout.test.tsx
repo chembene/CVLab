@@ -1,10 +1,11 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import DashboardLayout from '../app/dashboard/layout';
-import { AuthProvider } from '../lib/auth-context';
+import { renderWithProviders } from '../lib/test-utils';
 
 const replace = jest.fn();
 jest.mock('next/navigation', () => ({
   useRouter: () => ({ replace, push: jest.fn() }),
+  usePathname: () => '/dashboard',
 }));
 
 function mockFetchOnce(body: unknown, status = 200): void {
@@ -21,17 +22,15 @@ describe('DashboardLayout', () => {
 
   it('redirects to /login when there is no active session', async () => {
     mockFetchOnce({ success: false, error: { code: 'UNAUTHORIZED', message: 'No session.' } }, 401);
-    render(
-      <AuthProvider>
-        <DashboardLayout>
-          <p>conteúdo protegido</p>
-        </DashboardLayout>
-      </AuthProvider>,
+    renderWithProviders(
+      <DashboardLayout>
+        <p>conteúdo protegido</p>
+      </DashboardLayout>,
     );
     await waitFor(() => expect(replace).toHaveBeenCalledWith('/login'));
   });
 
-  it('renders the nav and children once authenticated', async () => {
+  it('renders the sidebar navigation and children once authenticated', async () => {
     mockFetchOnce({
       success: true,
       data: {
@@ -45,16 +44,15 @@ describe('DashboardLayout', () => {
         accessToken: 'token',
       },
     });
-    render(
-      <AuthProvider>
-        <DashboardLayout>
-          <p>conteúdo protegido</p>
-        </DashboardLayout>
-      </AuthProvider>,
+    renderWithProviders(
+      <DashboardLayout>
+        <p>conteúdo protegido</p>
+      </DashboardLayout>,
     );
     await waitFor(() => expect(screen.getByText('conteúdo protegido')).toBeInTheDocument());
-    expect(screen.getByRole('link', { name: 'Perfil' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Currículo' })).toBeInTheDocument();
+    expect(screen.getAllByRole('link', { name: 'Perfil' })[0]).toBeInTheDocument();
+    expect(screen.getAllByRole('link', { name: 'Currículo Principal' })[0]).toBeInTheDocument();
+    expect(screen.getAllByRole('link', { name: 'Versões do Currículo' })[0]).toBeInTheDocument();
     expect(replace).not.toHaveBeenCalled();
   });
 });

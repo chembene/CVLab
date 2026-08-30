@@ -10,6 +10,7 @@ const customJestConfig = {
   moduleNameMapper: {
     '^@cvlab/ui$': '<rootDir>/../../packages/ui/src/index.ts',
     '^@cvlab/types$': '<rootDir>/../../packages/types/src/index.ts',
+    '^@cvlab/resume-renderer$': '<rootDir>/../../packages/resume-renderer/src/index.ts',
   },
 };
 

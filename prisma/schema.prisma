@@ -93,10 +93,117 @@ enum AiRequestStatus {
   @@map("ai_request_status")
 }
 
+// Phase 7 — Resume Optimization (docs/architecture/resume-optimization.md)
+enum OptimizationStatus {
+  PENDING
+  COMPLETED
+  FAILED
+
+  @@map("optimization_status")
+}
+
+enum SuggestionPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+
+  @@map("suggestion_priority")
+}
+
+enum SuggestionType {
+  KEYWORD
+  SUMMARY
+  EXPERIENCE
+  SKILL
+  EDUCATION
+  PROJECT
+  ACHIEVEMENT
+  LANGUAGE
+  CERTIFICATION
+  GENERAL
+
+  @@map("suggestion_type")
+}
+
+// Phase 8 — Cover Letter Engine (docs/architecture/cover-letter-engine.md)
+enum CoverLetterStatus {
+  DRAFT
+  GENERATED
+  EDITED
+  ARCHIVED
+
+  @@map("cover_letter_status")
+}
+
+// Phase 9 — Interview Preparation Engine (docs/architecture/interview-engine.md)
+enum InterviewType {
+  GENERAL
+  TECHNICAL
+  BEHAVIORAL
+  MIXED
+
+  @@map("interview_type")
+}
+
+enum InterviewDifficulty {
+  JUNIOR
+  MID
+  SENIOR
+  EXECUTIVE
+
+  @@map("interview_difficulty")
+}
+
+enum InterviewStatus {
+  IN_PROGRESS
+  COMPLETED
+
+  @@map("interview_status")
+}
+
+// Phase 10.5 — "Interview generation must no longer depend exclusively on
+// Resume Variant. Resume becomes optional." See docs/architecture/interview-engine.md
+// §"Three Modes".
+enum InterviewMode {
+  RESUME
+  JOB
+  ROLE
+
+  @@map("interview_mode")
+}
+
+enum QuestionCategory {
+  BEHAVIORAL
+  TECHNICAL
+  SITUATIONAL
+  CULTURE
+  LEADERSHIP
+  COMMUNICATION
+
+  @@map("question_category")
+}
+
+enum CoverLetterTone {
+  PROFESSIONAL
+  MODERN
+  EXECUTIVE
+  TECHNICAL
+  FRIENDLY
+
+  @@map("cover_letter_tone")
+}
+
 enum JobTargetStatus {
   DRAFT
   READY
   ARCHIVED
+  // Phase 10.5 — set by JobImportService when the Job Import Engine's
+  // overall extraction confidence falls below the configured threshold;
+  // the frontend surfaces this alongside JobImportMetadata.fieldConfidence
+  // so the user can review/correct low-confidence fields before treating
+  // the auto-created JobTarget as READY.
+  REQUIRES_REVIEW
 
   @@map("job_target_status")
 }
@@ -111,6 +218,51 @@ enum ApplicationStatus {
   ARCHIVED
 
   @@map("application_status")
+}
+
+/// Phase 10.5 Resume Version History — the brief's exact label examples,
+/// plus CUSTOM as the escape hatch (paired with
+/// ResumeVariantVersion.customLabel free text).
+enum ResumeVersionLabel {
+  INITIAL
+  AI_OPTIMIZED
+  MANUAL_EDIT
+  INTERVIEW_VERSION
+  APPLICATION_VERSION
+  CUSTOM
+
+  @@map("resume_version_label")
+}
+
+/// "AI or User generated" (Resume Version History timeline requirement).
+enum ResumeVersionSource {
+  USER
+  AI
+
+  @@map("resume_version_source")
+}
+
+/// Export Engine (docs/architecture/export-engine.md) — the only 2 formats
+/// this phase implements. DOCX/CoverLetter/ApplicationPackage formats are
+/// intentionally out of scope; the model is designed so adding a value here
+/// later needs no other schema change.
+enum ExportFormat {
+  PDF
+  DOCX
+
+  @@map("export_format")
+}
+
+/// Mirrors AiRequestStatus's PENDING→terminal shape (the closest existing
+/// precedent for "a paid, potentially-failing operation with an
+/// idempotency key"), even though Export never goes through
+/// AiOrchestrationService.
+enum ExportStatus {
+  PENDING
+  SUCCESS
+  FAILED
+
+  @@map("export_status")
 }
 
 // ---------------------------------------------------------------------------
@@ -128,26 +280,35 @@ model User {
   updatedAt    DateTime   @updatedAt @map("updated_at")
   deletedAt    DateTime?  @map("deleted_at")
 
-  profile             Profile?
-  masterResume        MasterResume?
-  jobTargets          JobTarget[]
-  applications        Application[]
-  resumeVariants      ResumeVariant[]
-  atsReports          AtsReport[]
-  cvs                 Cv[]
-  wallet              CreditWallet?
-  creditTransactions  CreditTransaction[]
-  payments            Payment[]
-  aiRequests          AiRequest[]
-  testSessions        TestSession[]
-  interviews          Interview[]
-  notifications       Notification[]
-  historyEvents       HistoryEvent[]
-  adminProfile        AdminUser?
-  auditLogsAsActor    AuditLog[]
-  sessions            Session[]
-  verificationTokens  VerificationToken[]
-  passwordResetTokens PasswordResetToken[]
+  profile                      Profile?
+  masterResume                 MasterResume?
+  jobTargets                   JobTarget[]
+  applications                 Application[]
+  resumeVariants               ResumeVariant[]
+  createdResumeVersions        ResumeVariantVersion[]
+  atsReports                   AtsReport[]
+  resumeOptimizations          ResumeOptimization[]
+  coverLetters                 CoverLetter[]
+  interviewSessions            InterviewSession[]
+  careerAdvices                CareerAdvice[]
+  cvImports                    CvImport[]
+  applicationPipelineSessions  ApplicationPipelineSession[]
+  exportedDocuments            ExportedDocument[]
+  resumeTemplateFavorites      ResumeTemplateFavorite[]
+  coverLetterTemplateFavorites CoverLetterTemplateFavorite[]
+  cvs                          Cv[]
+  wallet                       CreditWallet?
+  creditTransactions           CreditTransaction[]
+  payments                     Payment[]
+  aiRequests                   AiRequest[]
+  testSessions                 TestSession[]
+  notifications                Notification[]
+  historyEvents                HistoryEvent[]
+  adminProfile                 AdminUser?
+  auditLogsAsActor             AuditLog[]
+  sessions                     Session[]
+  verificationTokens           VerificationToken[]
+  passwordResetTokens          PasswordResetToken[]
 
   // Soft-delete-aware uniqueness (users, profiles, cvs, tests, questions —
   // see docs/architecture/database-overview.md §3) requires PARTIAL unique
@@ -248,6 +409,7 @@ model MasterResume {
   volunteerExperiences VolunteerExperience[]
   references           Reference[]
   resumeVariants       ResumeVariant[]
+  cvImports            CvImport[]
 
   @@map("master_resumes")
 }
@@ -496,10 +658,16 @@ model JobTarget {
   salaryMin      Decimal?        @map("salary_min") @db.Decimal(12, 2)
   salaryMax      Decimal?        @map("salary_max") @db.Decimal(12, 2)
   currency       String          @default("MZN")
-  // User-supplied, stored exactly as entered — never scraped, fetched, or
-  // parsed by the platform (see JobTargetAnalysisService).
+  // Originally "never scraped, fetched, or parsed by the platform" (Phase
+  // 2B) — superseded by the Phase 10.5 Job Import Engine: when jobUrl is
+  // set via POST /job-import instead of typed manually, JobImportService
+  // *does* fetch and parse it, and records that provenance in the
+  // JobImportMetadata row (see docs/architecture/job-import.md). Manually
+  // created JobTargets still just store jobUrl as entered, untouched.
   jobUrl         String?         @map("job_url")
-  // Pasted vacancy text, stored as-is. No AI extraction in this phase.
+  // Pasted vacancy text, or (Phase 10.5) the Job Import Engine's cleaned
+  // extracted description — see JobImportMetadata.cleanedDescription for
+  // the same text plus its provenance/confidence.
   jobDescription String?         @map("job_description")
   source         String?
   status         JobTargetStatus @default(DRAFT)
@@ -509,14 +677,20 @@ model JobTarget {
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
-  user           User                @relation(fields: [userId], references: [id])
-  keywords       JobTargetKeyword[]
-  skills         JobTargetSkill[]
-  languages      JobTargetLanguage[]
-  analysis       JobTargetAnalysis?
-  applications   Application[]
-  resumeVariants ResumeVariant[]
-  atsReports     AtsReport[]
+  user                        User                         @relation(fields: [userId], references: [id])
+  keywords                    JobTargetKeyword[]
+  skills                      JobTargetSkill[]
+  languages                   JobTargetLanguage[]
+  analysis                    JobTargetAnalysis?
+  importMetadata              JobImportMetadata?
+  applications                Application[]
+  resumeVariants              ResumeVariant[]
+  atsReports                  AtsReport[]
+  resumeOptimizations         ResumeOptimization[]
+  coverLetters                CoverLetter[]
+  interviewSessions           InterviewSession[]
+  applicationPipelineSessions ApplicationPipelineSession[]
+  resumeVariantVersions       ResumeVariantVersion[]
 
   @@index([userId])
   @@map("job_targets")
@@ -561,6 +735,70 @@ model JobTargetLanguage {
   @@map("job_target_languages")
 }
 
+/// Phase 10.5 — one row per JobTarget created via POST /job-import
+/// (JobImportService), holding the fetch/extraction audit trail the brief
+/// requires: original HTML, cleaned description, per-field confidence, and
+/// when the extraction ran. JobTargets created manually (the Phase 2B flow)
+/// have no row here. Deliberately NOT soft-deleted — it's a point-in-time
+/// audit record of one import event, not a mutable resource of its own;
+/// deleting the JobTarget cascades conceptually (never physically deleted
+/// by app code, matching this project's soft-delete-by-default rule for
+/// every OTHER row, but see docs/architecture/job-import.md for why this
+/// one table is the disclosed exception — an import record with no
+/// surviving JobTarget to explain has no product meaning to preserve).
+model JobImportMetadata {
+  id          String @id @default(uuid())
+  jobTargetId String @unique @map("job_target_id")
+
+  sourceUrl String @map("source_url")
+  // Hostname-derived label from the parser registry, e.g. "greenhouse",
+  // "lever", "linkedin", "generic" — see ParserRegistry.select().
+  provider  String
+
+  rawHtml            String  @map("raw_html")
+  cleanedDescription String  @map("cleaned_description")
+  // Resolved once, priority order: Open Graph image -> hiringOrganization's
+  // schema.org logo -> Google's favicon service for the target's own
+  // domain -> the page's own <link rel="icon">. Nullable — plenty of
+  // career pages expose none of these. See
+  // utils/company-logo.util.ts.
+  companyLogoUrl     String? @map("company_logo_url")
+  // The full ParsedJobData the parser produced — responsibilities/
+  // requirements/niceToHave/benefits/skills/technologies/languages as
+  // structured arrays, plus normalized seniority/employmentType/salary
+  // (min/max/currency/period)/experience(min/preferred years)/education
+  // level — not just the flattened cleanedDescription text. JobTarget
+  // itself only gets the fields it already has columns for
+  // (title/company/location/employmentType/seniority/salary/
+  // jobDescription) plus its keywords/skills/languages child rows; this
+  // is the source-of-truth extraction the frontend's import-preview
+  // screen reads to render/highlight per-section confidence.
+  extractedData      Json    @map("extracted_data")
+
+  // Per top-level ParsedJobData field, 0-1 — same shape/spirit as
+  // CvImport.fieldConfidence (Phase 10.5 CV Import Engine).
+  fieldConfidence   Json  @map("field_confidence")
+  overallConfidence Float @map("overall_confidence")
+
+  extractedAt DateTime @map("extracted_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  // Set when this row's extraction data was copied from a prior import of
+  // the exact same sourceUrl rather than freshly fetched/parsed (rule 13,
+  // "duplicate detection" — see JobImportService.importFromUrl). Points at
+  // the JobImportMetadata row the data actually came from; extractedAt
+  // above still reflects the ORIGINAL extraction time, not when this row
+  // was created, so the audit trail stays honest about data freshness.
+  duplicateOfId String?             @map("duplicate_of_id")
+  duplicateOf   JobImportMetadata?  @relation("JobImportDuplicates", fields: [duplicateOfId], references: [id])
+  duplicates    JobImportMetadata[] @relation("JobImportDuplicates")
+
+  jobTarget JobTarget @relation(fields: [jobTargetId], references: [id], onDelete: Cascade)
+
+  @@index([sourceUrl])
+  @@map("job_import_metadata")
+}
+
 /// Prepared ahead of AI implementation (Phase 6+) — no row is written by
 /// this phase. One row per JobTarget, recomputed in place (not versioned,
 /// not soft-deleted) whenever a future AI phase runs analysis again.
@@ -599,11 +837,26 @@ model ResumeVariant {
   userId         String  @map("user_id")
   masterResumeId String  @map("master_resume_id")
   jobTargetId    String? @map("job_target_id")
+  // Phase 10.5 Template Engine — which ResumeTemplate renders this Variant.
+  // Switching templates never touches `content`: "No content duplication.
+  // Template changes must be instant." Nullable so every Variant created
+  // before this phase (and any created without explicitly picking one)
+  // renders with the app's implicit default template.
+  templateId     String? @map("template_id")
+  // Phase 11 Template Engine — Part 6 "Theme Customization": user-chosen
+  // color/font/spacing/margin/header/divider/icon/photo overrides layered on
+  // top of the selected ResumeTemplate's own defaults at render time.
+  // Presentation-only, exactly like `templateId` — never read by anything
+  // that touches `content`. Nullable: no row means "use the template's
+  // defaults unchanged". See docs/architecture/template-engine.md §6.
+  themeOverrides Json?   @map("theme_overrides")
 
   title                String
-  // Edit counter, not a version-history table — bumped by every content
-  // edit (PUT), not by archive/restore. A future phase can add real
-  // version history (mirroring CvVersion) without changing this column.
+  // Edit counter — bumped by every content edit (PUT/PATCH), not by
+  // archive/restore. Phase 10.5 adds `versions` (below) as the real
+  // version-history table this comment anticipated; `version` itself keeps
+  // its original meaning (the current row's own edit count) and now also
+  // doubles as the version NUMBER of the latest `ResumeVariantVersion` row.
   version              Int     @default(1)
   // Open string, not a closed enum — same rationale as MasterResume.status.
   status               String  @default("DRAFT")
@@ -619,38 +872,153 @@ model ResumeVariant {
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
-  user         User          @relation(fields: [userId], references: [id])
-  masterResume MasterResume  @relation(fields: [masterResumeId], references: [id])
-  jobTarget    JobTarget?    @relation(fields: [jobTargetId], references: [id])
-  applications Application[]
-  atsReports   AtsReport[]
+  user                        User                         @relation(fields: [userId], references: [id])
+  masterResume                MasterResume                 @relation(fields: [masterResumeId], references: [id])
+  jobTarget                   JobTarget?                   @relation(fields: [jobTargetId], references: [id])
+  template                    ResumeTemplate?              @relation(fields: [templateId], references: [id])
+  applications                Application[]
+  atsReports                  AtsReport[]
+  resumeOptimizations         ResumeOptimization[]
+  coverLetters                CoverLetter[]
+  interviewSessions           InterviewSession[]
+  versions                    ResumeVariantVersion[]
+  applicationPipelineSessions ApplicationPipelineSession[]
+  exportedDocuments           ExportedDocument[]
 
   @@index([userId])
   @@index([masterResumeId])
   @@index([jobTargetId])
+  @@index([templateId])
   @@map("resume_variants")
+}
+
+/// Phase 10.5 Resume Version History — full version history for
+/// ResumeVariant.content, per the brief: "Every Resume Variant must have
+/// full version history. Users should never lose edits." A snapshot row is
+/// created on every content-changing save (manual PUT edits, "Save
+/// Version" checkpoints, auto-snapshots before Resume Optimization/ATS
+/// analysis/Cover Letter generation/Interview preparation, applied AI
+/// suggestions, restores, and Application submissions) — see
+/// docs/architecture/resume-version-history.md. Append-only, like
+/// AtsReport: no update method, ever.
+model ResumeVariantVersion {
+  id              String @id @default(uuid())
+  resumeVariantId String @map("resume_variant_id")
+  // Matches ResumeVariant.version at the moment this snapshot was taken —
+  // human-meaningful ("version 3"), not just an opaque row id.
+  versionNumber   Int    @map("version_number")
+  content         Json
+
+  label       ResumeVersionLabel  @default(MANUAL_EDIT)
+  // Free text, used (not required) when label is CUSTOM, or as extra
+  // detail alongside any other label.
+  customLabel String?             @map("custom_label")
+  source      ResumeVersionSource @default(USER)
+
+  // Who performed the action that produced this version — always a real
+  // user (even AI-sourced versions were triggered by a user action); no
+  // system/service-account rows exist in this schema.
+  createdByUserId String @map("created_by_user_id")
+
+  // Point-in-time correlation — which JobTarget/CoverLetter this version
+  // was associated with when captured, not necessarily what the LIVE
+  // ResumeVariant references today.
+  jobTargetId   String? @map("job_target_id")
+  coverLetterId String? @map("cover_letter_id")
+
+  // User-entered free text for manual checkpoints ("Save Version").
+  notes         String?
+  // System-generated context ("Snapshot before Resume Optimization",
+  // "Restored from version 3"), shown in the timeline. Never required.
+  changeSummary String? @map("change_summary")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  resumeVariant     ResumeVariant      @relation(fields: [resumeVariantId], references: [id])
+  createdBy         User               @relation(fields: [createdByUserId], references: [id])
+  jobTarget         JobTarget?         @relation(fields: [jobTargetId], references: [id])
+  coverLetter       CoverLetter?       @relation(fields: [coverLetterId], references: [id])
+  applications      Application[]
+  exportedDocuments ExportedDocument[]
+
+  @@unique([resumeVariantId, versionNumber])
+  @@index([resumeVariantId])
+  @@map("resume_variant_versions")
+}
+
+/// Export Engine (docs/architecture/export-engine.md) — one row per export
+/// attempt, the audit/idempotency record for a file generated and streamed
+/// directly in the HTTP response, never persisted to storage (no
+/// storageKey/storageUrl by design this phase). Mirrors AiRequest's
+/// PENDING→SUCCESS/FAILED + creditsCharged/creditsRefunded shape — the
+/// closest existing precedent for "a paid, potentially-failing operation
+/// with an idempotency key" — even though Export never goes through
+/// AiOrchestrationService (no AI call is involved; credits are charged via
+/// CreditService directly).
+model ExportedDocument {
+  id     String @id @default(uuid())
+  userId String @map("user_id")
+
+  resumeVariantId        String  @map("resume_variant_id")
+  // Set only when the caller explicitly pinned a historical version — null
+  // means "whatever was current on ResumeVariant at export time".
+  resumeVariantVersionId String? @map("resume_variant_version_id")
+
+  format ExportFormat
+  status ExportStatus @default(PENDING)
+
+  // Known upfront (PDF=10, DOCX=5) and written at spend() time.
+  creditsCharged  Int @default(0) @map("credits_charged")
+  // Written by RefundService when spendAndExecute() auto-refunds this
+  // export's charge after a render failure.
+  creditsRefunded Int @default(0) @map("credits_refunded")
+
+  // Deterministic — never includes randomUUID() — see
+  // docs/architecture/export-engine.md §"Idempotency".
+  idempotencyKey String  @unique @map("idempotency_key")
+  failureReason  String? @map("failure_reason")
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  completedAt DateTime? @map("completed_at")
+
+  user                 User                  @relation(fields: [userId], references: [id])
+  resumeVariant        ResumeVariant         @relation(fields: [resumeVariantId], references: [id])
+  resumeVariantVersion ResumeVariantVersion? @relation(fields: [resumeVariantVersionId], references: [id])
+
+  @@index([userId])
+  @@index([resumeVariantId])
+  @@map("exported_documents")
 }
 
 /// One application for one Job Target. `resumeVariantId` is nullable — an
 /// application can exist before a tailored variant has been created for it.
 model Application {
-  id              String            @id @default(uuid())
-  userId          String            @map("user_id")
-  jobTargetId     String            @map("job_target_id")
-  resumeVariantId String?           @map("resume_variant_id")
-  status          ApplicationStatus @default(SAVED)
-  appliedAt       DateTime?         @map("applied_at")
-  interviewDate   DateTime?         @map("interview_date")
-  result          String?
-  notes           String?
+  id                     String            @id @default(uuid())
+  userId                 String            @map("user_id")
+  jobTargetId            String            @map("job_target_id")
+  resumeVariantId        String?           @map("resume_variant_id")
+  // Phase 10.5 — "Every job application must permanently reference the
+  // exact Resume Version used." Set once at creation (a fresh
+  // APPLICATION_VERSION snapshot is taken at that moment, guaranteeing an
+  // exact-content capture regardless of whether the live Variant has
+  // already been edited since) and never changed afterward — a factual
+  // record of what was submitted, not a live pointer to the Variant's
+  // current state (which `resumeVariantId` above already provides).
+  resumeVariantVersionId String?           @map("resume_variant_version_id")
+  status                 ApplicationStatus @default(SAVED)
+  appliedAt              DateTime?         @map("applied_at")
+  interviewDate          DateTime?         @map("interview_date")
+  result                 String?
+  notes                  String?
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
-  user          User           @relation(fields: [userId], references: [id])
-  jobTarget     JobTarget      @relation(fields: [jobTargetId], references: [id])
-  resumeVariant ResumeVariant? @relation(fields: [resumeVariantId], references: [id])
+  user                 User                  @relation(fields: [userId], references: [id])
+  jobTarget            JobTarget             @relation(fields: [jobTargetId], references: [id])
+  resumeVariant        ResumeVariant?        @relation(fields: [resumeVariantId], references: [id])
+  resumeVariantVersion ResumeVariantVersion? @relation(fields: [resumeVariantVersionId], references: [id])
 
   @@index([userId])
   @@index([jobTargetId])
@@ -701,9 +1069,10 @@ model AtsReport {
   // ("never overwrite ... always create a new one").
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  user          User          @relation(fields: [userId], references: [id])
-  resumeVariant ResumeVariant @relation(fields: [resumeVariantId], references: [id])
-  jobTarget     JobTarget     @relation(fields: [jobTargetId], references: [id])
+  user                User                 @relation(fields: [userId], references: [id])
+  resumeVariant       ResumeVariant        @relation(fields: [resumeVariantId], references: [id])
+  jobTarget           JobTarget            @relation(fields: [jobTargetId], references: [id])
+  resumeOptimizations ResumeOptimization[]
 
   @@index([userId])
   @@index([resumeVariantId])
@@ -913,6 +1282,12 @@ model Payment {
   createdAt         DateTime            @default(now()) @map("created_at")
   updatedAt         DateTime            @updatedAt @map("updated_at")
   completedAt       DateTime?           @map("completed_at")
+  // Payments & Credits phase, Decision 2 — explicit, auditable expiration
+  // for a PENDING payment (prompts/12-mpesa-integration.md §16). Set at
+  // creation time; a background/on-read check compares against `now()` to
+  // treat a stale PENDING payment as EXPIRED — never silently, and never
+  // by deriving it implicitly from `createdAt` alone.
+  expiresAt         DateTime?           @map("expires_at")
 
   user    User          @relation(fields: [userId], references: [id])
   package CreditPackage @relation(fields: [packageId], references: [id])
@@ -930,26 +1305,44 @@ model Payment {
 // ---------------------------------------------------------------------------
 
 model AiRequest {
-  id             String          @id @default(uuid())
-  userId         String          @map("user_id")
-  feature        String
-  status         AiRequestStatus @default(PENDING)
-  model          String?
-  requestId      String?         @map("request_id")
-  inputTokens    Int?            @map("input_tokens")
-  outputTokens   Int?            @map("output_tokens")
-  totalTokens    Int?            @map("total_tokens")
-  estimatedCost  Decimal?        @map("estimated_cost") @db.Decimal(10, 4)
-  creditsCharged Int             @default(0) @map("credits_charged")
-  durationMs     Int?            @map("duration_ms")
-  errorCode      String?         @map("error_code")
-  metadata       Json?
+  id              String          @id @default(uuid())
+  userId          String          @map("user_id")
+  feature         String
+  status          AiRequestStatus @default(PENDING)
+  // Open string, not a closed enum — future providers (OpenAI, Anthropic,
+  // Gemini, local LLMs) per docs/product/competitive-advantages.md's
+  // "Extensible Architecture" — no closed value set specified yet, same
+  // rationale as MasterResume.status.
+  provider        String?
+  model           String?
+  requestId       String?         @map("request_id")
+  inputTokens     Int?            @map("input_tokens")
+  outputTokens    Int?            @map("output_tokens")
+  totalTokens     Int?            @map("total_tokens")
+  estimatedCost   Decimal?        @map("estimated_cost") @db.Decimal(10, 4)
+  creditsCharged  Int             @default(0) @map("credits_charged")
+  // Set by RefundService when a spendAndExecute() call auto-refunds this
+  // request's charge after a platform-caused failure. See credits module.
+  creditsRefunded Int             @default(0) @map("credits_refunded")
+  durationMs      Int?            @map("duration_ms")
+  // SHA-256 hex digest of the prompt text — never the raw prompt itself,
+  // per docs/architecture/ai-architecture.md §5 ("never full raw prompts by
+  // default"). Lets a future phase dedupe/cache by identical prompt without
+  // storing user content.
+  promptHash      String?         @map("prompt_hash")
+  // Version of the PromptBuilder/PromptTemplate that produced promptHash —
+  // see docs/architecture/ai-orchestration.md §"Prompt Engine". Lets
+  // analytics/debugging distinguish "same feature, different prompt
+  // revision" without needing the raw prompt text.
+  promptVersion   Int?            @map("prompt_version")
+  errorCode       String?         @map("error_code")
+  metadata        Json?
   // Required by docs/architecture/database-overview.md §4 (idempotency-critical
   // constraints) even though not enumerated in ai-architecture.md §4's field
   // list — added here to satisfy the explicit unique-constraint requirement.
-  idempotencyKey String          @unique @map("idempotency_key")
-  createdAt      DateTime        @default(now()) @map("created_at")
-  completedAt    DateTime?       @map("completed_at")
+  idempotencyKey  String          @unique @map("idempotency_key")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  completedAt     DateTime?       @map("completed_at")
 
   user User @relation(fields: [userId], references: [id])
 
@@ -957,6 +1350,324 @@ model AiRequest {
   @@index([feature, createdAt])
   @@index([status])
   @@map("ai_requests")
+}
+
+// ---------------------------------------------------------------------------
+// Resume Optimization (docs/architecture/resume-optimization.md, Phase 7)
+// ---------------------------------------------------------------------------
+
+model ResumeOptimization {
+  id              String @id @default(uuid())
+  userId          String @map("user_id")
+  resumeVariantId String @map("resume_variant_id")
+  jobTargetId     String @map("job_target_id")
+  // The "before" AtsReport this optimization was run against — either an
+  // existing report reused, or a fresh one run just-in-time (see
+  // ResumeOptimizationService.run() / the `force` input flag).
+  atsReportId     String @map("ats_report_id")
+
+  status         OptimizationStatus @default(PENDING)
+  // Snapshot of what CreditService.spendAndExecute() actually charged —
+  // never recomputed from feature_pricing after the fact, so historical rows
+  // stay accurate even if pricing changes later.
+  creditsUsed    Int                @default(0) @map("credits_used")
+  beforeScore    Int                @map("before_score")
+  // AI-estimated score if every suggestion were accepted — not re-measured
+  // until a real ATS re-run happens (see apply()).
+  predictedScore Int?               @map("predicted_score")
+  summary        String?
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  user              User                     @relation(fields: [userId], references: [id])
+  resumeVariant     ResumeVariant            @relation(fields: [resumeVariantId], references: [id])
+  jobTarget         JobTarget                @relation(fields: [jobTargetId], references: [id])
+  atsReport         AtsReport                @relation(fields: [atsReportId], references: [id])
+  suggestions       OptimizationSuggestion[]
+  coverLetters      CoverLetter[]
+  interviewSessions InterviewSession[]
+
+  @@index([userId])
+  @@index([resumeVariantId])
+  @@map("resume_optimizations")
+}
+
+model OptimizationSuggestion {
+  id             String @id @default(uuid())
+  optimizationId String @map("optimization_id")
+
+  type          SuggestionType
+  // Which of the 8 sections ResumeSuggestionApplier knows how to write to
+  // (summary/experience/skills/projects/education/languages/certifications/
+  // achievements) — a plain string, not a closed enum, since the AI response
+  // supplies it and an unrecognized value must be safely skippable at apply
+  // time rather than fail Prisma validation at parse time.
+  section       String
+  title         String
+  description   String?
+  reason        String?
+  priority      SuggestionPriority @default(MEDIUM)
+  // Empty string (never null) when a suggestion is a pure addition with no
+  // existing text to replace — see ResumeSuggestionApplier.
+  originalText  String?            @map("original_text")
+  suggestedText String             @map("suggested_text")
+
+  // User selects which suggestions to apply (accepted); ResumeSuggestionApplier
+  // then marks the ones it actually wrote to the resume variant (applied).
+  // A suggestion can be accepted without being applied (e.g. its section was
+  // unrecognized) — applied implies accepted, never the reverse.
+  accepted     Boolean @default(false)
+  applied      Boolean @default(false)
+  displayOrder Int     @default(0) @map("display_order")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  optimization ResumeOptimization @relation(fields: [optimizationId], references: [id])
+
+  @@index([optimizationId])
+  @@map("optimization_suggestions")
+}
+
+// ---------------------------------------------------------------------------
+// Cover Letter Engine (docs/architecture/cover-letter-engine.md, Phase 8)
+// ---------------------------------------------------------------------------
+
+model CoverLetter {
+  id              String  @id @default(uuid())
+  userId          String  @map("user_id")
+  resumeVariantId String  @map("resume_variant_id")
+  jobTargetId     String  @map("job_target_id")
+  // Optional link to the Resume Optimization run whose summary informed this
+  // letter's prompt — see CoverLetterPromptBuilder. Never required.
+  optimizationId  String? @map("optimization_id")
+  // Phase 10.5 Template Engine — same "instant switch, no content
+  // duplication" rule as ResumeVariant.templateId.
+  templateId      String? @map("template_id")
+  // Phase 11 Template Engine — same theme-override mechanism as
+  // ResumeVariant.themeOverrides, see there for the full rationale.
+  themeOverrides  Json?   @map("theme_overrides")
+
+  title    String
+  content  String
+  tone     CoverLetterTone
+  // Open string (e.g. "pt-MZ", "en"), not a closed enum — same rationale as
+  // MasterResume.status: no closed value set specified by the brief.
+  language String
+  // "Never overwrite previous versions. Every regeneration creates a new
+  // version" — regenerate() creates a brand-new row with version =
+  // source.version + 1; this column is never incremented in place. Mirrors
+  // the "always create a new one" precedent from AtsReport (Phase 4) rather
+  // than ResumeVariant's in-place edit-counter (Phase 3) — see
+  // cover-letter-engine.md §"Versioning" for why this table follows the
+  // former, not the latter.
+  version  Int               @default(1)
+  status   CoverLetterStatus @default(DRAFT)
+
+  // Snapshot of what CreditService.spendAndExecute() actually charged for
+  // this specific row — 0 for a manually-duplicated copy, which costs
+  // nothing to create.
+  creditsUsed   Int     @default(0) @map("credits_used")
+  generatedByAI Boolean @default(true) @map("generated_by_ai")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  user                  User                   @relation(fields: [userId], references: [id])
+  resumeVariant         ResumeVariant          @relation(fields: [resumeVariantId], references: [id])
+  jobTarget             JobTarget              @relation(fields: [jobTargetId], references: [id])
+  optimization          ResumeOptimization?    @relation(fields: [optimizationId], references: [id])
+  template              CoverLetterTemplate?   @relation(fields: [templateId], references: [id])
+  interviewSessions     InterviewSession[]
+  resumeVariantVersions ResumeVariantVersion[]
+
+  @@index([userId])
+  @@index([resumeVariantId])
+  @@index([templateId])
+  @@map("cover_letters")
+}
+
+// ---------------------------------------------------------------------------
+// Career Advisor Engine (docs/architecture/career-advisor-engine.md, Phase 18)
+// ---------------------------------------------------------------------------
+
+model CareerAdvice {
+  id       String @id @default(uuid())
+  userId   String @map("user_id")
+  // The exact question asked — either one of the frontend's suggested
+  // prompts or a free-text custom question. Never inferred/reconstructed.
+  question String
+
+  // The AI's structured response, split into typed columns (not one Json
+  // blob) — same "explicit typed columns over blobs" convention already
+  // used by CoverLetter/ResumeOptimization/AtsReport (see e.g.
+  // AtsReport.missingKeywords as a native String[]).
+  summary           String
+  currentAssessment String   @map("current_assessment")
+  strengths         String[]
+  gaps              String[]
+  recommendations   String[]
+  nextSteps         String[] @map("next_steps")
+
+  // Lightweight record of which optional data sources fed this advice
+  // (booleans/counts only, e.g. {"hasMasterResume":true,"jobTargetsCount":2})
+  // — never the resume/job target content itself, which already lives in
+  // its own tables and can be read again when needed. See
+  // docs/architecture/career-advisor-engine.md "Context Snapshot".
+  contextSnapshot Json? @map("context_snapshot")
+  // Snapshot of what CreditService.spendAndExecute() actually charged for
+  // this row — same rationale as ResumeOptimization.creditsUsed: never
+  // recomputed from feature_pricing after the fact.
+  creditsUsed     Int   @default(0) @map("credits_used")
+  // Loose pointer to the matching AiRequest row, never a FK — same style as
+  // other cross-references in this schema. AiRequest itself never stores
+  // the actual question/response text (only technical/billing metadata),
+  // so this table is the sole place the generated content lives.
+  aiRequestId     String? @map("ai_request_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([userId, createdAt])
+  @@map("career_advice")
+}
+
+// ---------------------------------------------------------------------------
+// Interview Preparation Engine (docs/architecture/interview-engine.md, Phase 9)
+// ---------------------------------------------------------------------------
+
+model InterviewSession {
+  id     String @id @default(uuid())
+  userId String @map("user_id")
+
+  // Phase 10.5 — "Interview generation must no longer depend exclusively on
+  // Resume Variant. Resume becomes optional." `mode` selects which of the
+  // three input shapes below is authoritative; the others stay null for
+  // that mode. See docs/architecture/interview-engine.md §"Three Modes".
+  mode InterviewMode @default(RESUME)
+
+  // Mode RESUME/JOB: the Variant being interviewed about. Mode ROLE: null —
+  // "No Resume required." "One InterviewSession references one Resume
+  // Variant" — a single FK, not a list; many sessions may reference the
+  // same variant over time (each practice run is its own session), but each
+  // session has exactly one.
+  resumeVariantId String? @map("resume_variant_id")
+  // Mode RESUME (if the Variant has one linked)/JOB: the Job Target being
+  // interviewed about. Mode ROLE: null.
+  jobTargetId     String? @map("job_target_id")
+  // FASE 11 — Mode JOB only, pasted vacancy text supplied directly by the
+  // user at start() time (independently of, or alongside, jobTargetId — see
+  // §"Three Modes"). Deliberately its own column rather than reusing
+  // JobTarget.jobDescription: that field belongs to a JobTarget row, and
+  // Mode JOB must support "existing Job Target + supplementary free text"
+  // without losing either piece, plus the free-text-only case where no
+  // JobTarget exists at all. Treated as untrusted user data in the prompt,
+  // never as instructions — see InterviewQuestionPromptBuilder. Null in
+  // modes RESUME/ROLE.
+  jobDescription  String? @map("job_description")
+  // Both optional, both purely additional prompt context for question
+  // generation — never required, never cross-validated against each other
+  // or against resumeVariantId, mirroring Cover Letter's identical
+  // optimizationId precedent (Phase 8: ownership-checked, not
+  // consistency-checked). Only meaningful in modes that have a
+  // resumeVariantId/jobTargetId to begin with.
+  optimizationId  String? @map("optimization_id")
+  coverLetterId   String? @map("cover_letter_id")
+
+  // Mode ROLE only — free-text role title ("Backend Developer", "Civil
+  // Engineer", ...), optional industry/company context, and years of
+  // experience the candidate should be interviewed as if they have. All
+  // null in modes RESUME/JOB.
+  role            String? @map("role")
+  industry        String? @map("industry")
+  yearsExperience Int?    @map("years_experience")
+  companyName     String? @map("company_name")
+
+  type       InterviewType
+  difficulty InterviewDifficulty
+  // Open string (e.g. "en", "pt-MZ"), not a closed enum — same rationale as
+  // CoverLetter.language.
+  language   String
+
+  // All four nullable — set only once by evaluate(), never before. See
+  // interview-scoring.util.ts for how they're derived from per-answer scores.
+  overallScore       Int? @map("overall_score")
+  communicationScore Int? @map("communication_score")
+  technicalScore     Int? @map("technical_score")
+  confidenceScore    Int? @map("confidence_score")
+
+  status      InterviewStatus @default(IN_PROGRESS)
+  startedAt   DateTime        @default(now()) @map("started_at")
+  completedAt DateTime?       @map("completed_at")
+  deletedAt   DateTime?       @map("deleted_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user          User                @relation(fields: [userId], references: [id])
+  resumeVariant ResumeVariant?      @relation(fields: [resumeVariantId], references: [id])
+  jobTarget     JobTarget?          @relation(fields: [jobTargetId], references: [id])
+  optimization  ResumeOptimization? @relation(fields: [optimizationId], references: [id])
+  coverLetter   CoverLetter?        @relation(fields: [coverLetterId], references: [id])
+  questions     InterviewQuestion[]
+
+  @@index([userId])
+  @@index([resumeVariantId])
+  @@map("interview_sessions")
+}
+
+model InterviewQuestion {
+  id        String           @id @default(uuid())
+  sessionId String           @map("session_id")
+  order     Int
+  category  QuestionCategory
+
+  question    String
+  idealAnswer String @map("ideal_answer")
+  tips        String
+
+  // "Questions immutable" — no update path exists anywhere in this module;
+  // deliberately no updatedAt column, unlike almost every other table in
+  // this schema, since a row that can never change doesn't need one.
+  createdAt DateTime @default(now()) @map("created_at")
+
+  session InterviewSession @relation(fields: [sessionId], references: [id])
+  answer  InterviewAnswer?
+
+  @@index([sessionId])
+  @@map("interview_questions")
+}
+
+model InterviewAnswer {
+  // One answer per question — "Answers editable until evaluation" means
+  // resubmitting overwrites this same row (see
+  // InterviewRepository.upsertAnswer), never creates a second one.
+  id         String @id @default(uuid())
+  questionId String @unique @map("question_id")
+
+  answer String
+
+  // Set together, once, by evaluate() — null until then.
+  score    Int?
+  feedback String?
+
+  strengths    Json
+  improvements Json
+
+  // Deliberately no updatedAt column, per the brief's exact field list —
+  // upsertAnswer()'s overwrite-in-place behavior is still fully auditable
+  // via createdAt plus the parent session's own updatedAt.
+  createdAt DateTime @default(now()) @map("created_at")
+
+  question InterviewQuestion @relation(fields: [questionId], references: [id])
+
+  @@map("interview_answers")
 }
 
 // ---------------------------------------------------------------------------
@@ -1036,42 +1747,15 @@ model TestAnswer {
   @@map("test_answers")
 }
 
-// ---------------------------------------------------------------------------
-// Interviews
-// ---------------------------------------------------------------------------
-
-model Interview {
-  id           String    @id @default(uuid())
-  userId       String    @map("user_id")
-  status       String    @default("IN_PROGRESS")
-  overallScore Int?      @map("overall_score")
-  startedAt    DateTime  @default(now()) @map("started_at")
-  completedAt  DateTime? @map("completed_at")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
-
-  user      User                @relation(fields: [userId], references: [id])
-  questions InterviewQuestion[]
-
-  @@index([userId])
-  @@map("interviews")
-}
-
-model InterviewQuestion {
-  id           String   @id @default(uuid())
-  interviewId  String   @map("interview_id")
-  questionText String   @map("question_text")
-  userAnswer   String?  @map("user_answer")
-  evaluation   String?
-  score        Int?
-  order        Int
-  createdAt    DateTime @default(now()) @map("created_at")
-
-  interview Interview @relation(fields: [interviewId], references: [id])
-
-  @@index([interviewId])
-  @@map("interview_questions")
-}
+// Interviews: the Phase 0 placeholder `Interview`/`InterviewQuestion` models
+// that lived here (schema-only, never implemented — no service/repository/
+// controller ever referenced them, exactly like `Cv`/`CvVersion` still
+// today) have been removed and superseded by the real, fully-specified
+// `InterviewSession`/`InterviewQuestion`/`InterviewAnswer` design above
+// (Phase 9) — see docs/architecture/interview-engine.md. This is the one
+// pre-existing-schema change this phase required: Prisma forbids two models
+// sharing the name `InterviewQuestion`, and the brief's own literal model
+// names took precedence over dormant, behavior-free scaffolding.
 
 // ---------------------------------------------------------------------------
 // Notifications, History, Audit
@@ -1121,4 +1805,290 @@ model AuditLog {
 
   @@index([actorId, createdAt])
   @@map("audit_logs")
+}
+
+// ---------------------------------------------------------------------------
+// CV Import Engine (docs/architecture/cv-import.md, Phase 10.5)
+// ---------------------------------------------------------------------------
+
+enum CvFileType {
+  PDF
+  DOCX
+
+  @@map("cv_file_type")
+}
+
+enum CvImportStatus {
+  PENDING
+  EXTRACTED
+  CONFIRMED
+  DISCARDED
+  FAILED
+
+  @@map("cv_import_status")
+}
+
+/// "Never automatically save imported data" — this row IS the staging area
+/// between upload and confirmation; `extractedData`/`fieldConfidence` are
+/// the Preview screen's data source, never written into MasterResume until
+/// confirm() explicitly runs. `rawTextExcerpt` deliberately holds only a
+/// bounded prefix of the extracted text (not the full document), per
+/// docs/architecture/security-architecture.md's PII-minimization spirit —
+/// enough for support/debugging, not a second full copy of the user's CV.
+model CvImport {
+  id            String         @id @default(uuid())
+  userId        String         @map("user_id")
+  fileName      String         @map("file_name")
+  fileType      CvFileType     @map("file_type")
+  fileSizeBytes Int            @map("file_size_bytes")
+  status        CvImportStatus @default(PENDING)
+
+  rawTextExcerpt  String? @map("raw_text_excerpt")
+  extractedData   Json?   @map("extracted_data")
+  fieldConfidence Json?   @map("field_confidence")
+
+  // Snapshot of what CreditService.spendAndExecute() actually charged for
+  // the AI Extraction step — 0 until that step runs.
+  creditsUsed Int @default(0) @map("credits_used")
+
+  // Set only once confirm() succeeds — the MasterResume this import created.
+  masterResumeId String? @map("master_resume_id")
+  errorMessage   String? @map("error_message")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  // "Discard" is a soft delete — the row (and its extracted preview) stays
+  // available for audit, just hidden from the user's active import list.
+  deletedAt DateTime? @map("deleted_at")
+
+  user         User          @relation(fields: [userId], references: [id])
+  masterResume MasterResume? @relation(fields: [masterResumeId], references: [id])
+
+  @@index([userId])
+  @@map("cv_imports")
+}
+
+// ---------------------------------------------------------------------------
+// Template Engine (docs/architecture/template-engine.md, Phase 10.5)
+// ---------------------------------------------------------------------------
+
+enum ResumeTemplateCategory {
+  ATS_CLASSIC
+  MODERN
+  EXECUTIVE
+  MINIMAL
+  CREATIVE
+  DEVELOPER
+  FINANCE
+  MARKETING
+  HEALTHCARE
+  ACADEMIC
+  EUROPASS
+
+  @@map("resume_template_category")
+}
+
+enum CoverLetterTemplateCategory {
+  PROFESSIONAL
+  EXECUTIVE
+  MODERN
+  CORPORATE
+  CREATIVE
+  MINIMAL
+  ACADEMIC
+
+  @@map("cover_letter_template_category")
+}
+
+enum TemplateStatus {
+  ACTIVE
+  DRAFT
+  ARCHIVED
+
+  @@map("template_status")
+}
+
+/// "Switch templates... No content duplication. Template changes must be
+/// instant" — ResumeVariant/CoverLetter hold a nullable `templateId` FK
+/// (see those models); switching is a one-column update, `content` is never
+/// touched or copied. `layout` is an open string (e.g. "single-column",
+/// "two-column", "sidebar-left") — the brief didn't specify a closed set.
+model ResumeTemplate {
+  id       String                 @id @default(uuid())
+  name     String
+  category ResumeTemplateCategory
+
+  previewImage  String? @map("preview_image")
+  thumbnail     String?
+  isATSFriendly Boolean @default(true) @map("is_ats_friendly")
+  premium       Boolean @default(false)
+  version       Int     @default(1)
+
+  primaryColor      String   @map("primary_color")
+  secondaryColor    String   @map("secondary_color")
+  font              String
+  layout            String
+  supportedSections String[] @map("supported_sections")
+
+  status TemplateStatus @default(ACTIVE)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  resumeVariants ResumeVariant[]
+  favorites      ResumeTemplateFavorite[]
+
+  @@index([category])
+  @@map("resume_templates")
+}
+
+model CoverLetterTemplate {
+  id       String                      @id @default(uuid())
+  name     String
+  category CoverLetterTemplateCategory
+
+  previewImage  String? @map("preview_image")
+  thumbnail     String?
+  isATSFriendly Boolean @default(true) @map("is_ats_friendly")
+  premium       Boolean @default(false)
+  version       Int     @default(1)
+
+  primaryColor      String   @map("primary_color")
+  secondaryColor    String   @map("secondary_color")
+  font              String
+  layout            String
+  supportedSections String[] @map("supported_sections")
+
+  status TemplateStatus @default(ACTIVE)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  coverLetters CoverLetter[]
+  favorites    CoverLetterTemplateFavorite[]
+
+  @@index([category])
+  @@map("cover_letter_templates")
+}
+
+/// "Favorite" (Part 7/8 gallery UX). One row per user+template. A real FK to
+/// ResumeTemplate (not a polymorphic templateId/templateType pair) — this
+/// codebase always models a relation as a concrete typed FK rather than a
+/// loosely-typed generic reference (see e.g. Application's separate
+/// resumeVariantId/jobTargetId columns), so Resume and Cover Letter
+/// favorites are two small, parallel tables rather than one polymorphic one.
+/// "Recently used" is deliberately NOT a table here — it's derived from
+/// resume_variants.template_id / cover_letters.template_id + updated_at,
+/// avoiding a second copy of "which template did this user last touch".
+model ResumeTemplateFavorite {
+  id         String   @id @default(uuid())
+  userId     String   @map("user_id")
+  templateId String   @map("template_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user     User           @relation(fields: [userId], references: [id])
+  template ResumeTemplate @relation(fields: [templateId], references: [id])
+
+  @@unique([userId, templateId])
+  @@index([userId])
+  @@map("resume_template_favorites")
+}
+
+model CoverLetterTemplateFavorite {
+  id         String   @id @default(uuid())
+  userId     String   @map("user_id")
+  templateId String   @map("template_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user     User                @relation(fields: [userId], references: [id])
+  template CoverLetterTemplate @relation(fields: [templateId], references: [id])
+
+  @@unique([userId, templateId])
+  @@index([userId])
+  @@map("cover_letter_template_favorites")
+}
+
+// ---------------------------------------------------------------------------
+// Smart Application Pipeline (docs/architecture/application-pipeline.md, Phase 10.5)
+// ---------------------------------------------------------------------------
+
+enum ApplicationPipelineStatus {
+  IN_PROGRESS
+  COMPLETED
+  ABANDONED
+
+  @@map("application_pipeline_status")
+}
+
+enum ApplicationPipelineStep {
+  JOB_IMPORT
+  ATS_ANALYSIS
+  OPTIMIZATION
+  SUGGESTION_REVIEW
+  APPLY_SUGGESTIONS
+  COVER_LETTER
+  INTERVIEW_PREP
+  // EXPORT/FINALIZE added in the Smart Application Pipeline implementation
+  // pass (checkpoint approved) — the original Phase 10.5 schema stopped at
+  // SUMMARY, with no step representing "export the documents" or "register
+  // the Application," both explicitly required by this phase's brief.
+  EXPORT
+  FINALIZE
+  SUMMARY
+
+  @@map("application_pipeline_step")
+}
+
+/// A guided, resumable "Prepare Application" wizard session — one row per
+/// run, `currentStep` tracking progress so the frontend never has to keep
+/// wizard state client-side alone (a page refresh mid-wizard doesn't lose
+/// place). This module never re-implements ATS/Optimization/Cover
+/// Letter/Interview logic — every step delegates to that step's own
+/// existing service (AtsAnalysisService, ResumeOptimizationService,
+/// CoverLetterService, InterviewService) and just records the resulting
+/// entity id here.
+///
+/// Deliberate schema choice: only `resumeVariantId`/`jobTargetId` (the
+/// wizard's required inputs) are true Prisma relations. The step-result
+/// pointers (`atsReportId`, `optimizationId`, `newAtsReportId`,
+/// `coverLetterId`, `interviewSessionId`, `exportedDocumentId`,
+/// `applicationId`) are plain nullable string columns, not `@relation`s —
+/// nothing outside this table ever needs to navigate *to* a pipeline
+/// session from an AtsReport/CoverLetter/etc., and two columns both
+/// pointing at `AtsReport` (before/after) would otherwise need named
+/// relations + matching back-relation arrays on a model six other features
+/// already depend on. `ApplicationPipelineService` resolves each id through
+/// that domain's own service, never raw Prisma joins — see
+/// docs/architecture/application-pipeline.md §"Schema".
+model ApplicationPipelineSession {
+  id              String @id @default(uuid())
+  userId          String @map("user_id")
+  resumeVariantId String @map("resume_variant_id")
+  jobTargetId     String @map("job_target_id")
+
+  atsReportId        String? @map("ats_report_id")
+  optimizationId     String? @map("optimization_id")
+  newAtsReportId     String? @map("new_ats_report_id")
+  coverLetterId      String? @map("cover_letter_id")
+  interviewSessionId String? @map("interview_session_id")
+  // Added in the implementation pass (checkpoint approved) alongside the
+  // EXPORT/FINALIZE steps above — same plain-nullable-string convention as
+  // every other step-result pointer on this row.
+  exportedDocumentId String? @map("exported_document_id")
+  applicationId      String? @map("application_id")
+
+  currentStep ApplicationPipelineStep   @default(JOB_IMPORT) @map("current_step")
+  status      ApplicationPipelineStatus @default(IN_PROGRESS)
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  completedAt DateTime? @map("completed_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  user          User          @relation(fields: [userId], references: [id])
+  resumeVariant ResumeVariant @relation(fields: [resumeVariantId], references: [id])
+  jobTarget     JobTarget     @relation(fields: [jobTargetId], references: [id])
+
+  @@index([userId])
+  @@map("application_pipeline_sessions")
 }

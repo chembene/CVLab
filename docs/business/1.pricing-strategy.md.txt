@@ -38,12 +38,41 @@ Larger packages provide bonus credits.
 | AI Resume Suggestion | 30 |
 | ATS Analysis | 40 |
 | Cover Letter Generation | 40 |
-| Interview Practice | 60 |
+| Interview Practice — Resume | 60 |
+| Interview Practice — Job | 50 |
+| Interview Practice — Role | 40 |
 | Technical Test | 40 |
 | Resume Optimization | 80 |
 | AI Career Advice | 50 |
+| Resume Export — PDF | 10 |
+| Resume Export — DOCX | 5 |
 
 These values must be configurable and never hardcoded.
+
+## Interview Practice — per-mode breakdown (FASE 11)
+
+Interview Practice was originally one combined 60-credit line item. FASE 11 (2026-08-12) split it by mode — each mode is a genuinely different amount of context for the AI to work with (CV + Job Target + ATS report vs. just a job vs. just a role/title), so each gets its own price, itemized as questions + evaluation exactly like the original combined figure was:
+
+| Mode | Questions | Evaluation | Total |
+|------|----------:|-----------:|------:|
+| Resume (CV + Job Target) | 30 | 30 | 60 |
+| Job (vaga, CV opcional) | 25 | 25 | 50 |
+| Role (apenas cargo) | 20 | 20 | 40 |
+
+Resume keeps the original 60-credit total unchanged. Job and Role are priced lower, reflecting less context available to the AI (no ATS report, and Role has neither a résumé nor a Job Target at all).
+
+## Export Engine (Export Engine phase)
+
+Resume export (PDF or DOCX) is not an AI feature — no provider call, no AI-generated content, deterministic generation of the user's own already-stored content. Priced separately, per document format:
+
+| Format | Credits |
+|--------|--------:|
+| PDF | 10 |
+| DOCX | 5 |
+
+These are the values explicitly approved for this phase — see [export-engine.md](../architecture/export-engine.md) §7.
+
+**Known discrepancy, deliberately not resolved here**: `prompts/11-credit-system.md` §3 (a CLAUDE.md-mandatory "authoritative project rule" file) lists different credit values than this document for several already-shipped features — e.g. Cover Letter Generation is 40 here but 25 in `prompts/11-credit-system.md`. That file also lists "PDF premium export: 10 credits" (matching the value used here) but says nothing about DOCX. This phase did **not** silently reconcile any of those pre-existing mismatches — only added the two new Export Engine rows above, using the values explicitly approved for this phase. Reconciling `prompts/11-credit-system.md` against what is actually implemented/seeded remains an open item for a future phase.
 
 ---
 

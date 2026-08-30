@@ -65,6 +65,23 @@ export class AtsAnalysisService {
       variant.jobTargetId,
     );
 
+    // Auto-snapshot hook (Phase 10.5 Resume Version History, rule 8) —
+    // "before ATS rewrite". AtsAnalysisService itself is deterministic and
+    // never mutates the Resume Variant's content, but it's still one of the
+    // brief's 4 named integration points — this captures the exact resume
+    // state an ATS score was computed against, for audit/traceability.
+    // Failures are swallowed inside snapshotBeforeAiAction() itself.
+    await this.resumeVariantService.snapshotBeforeAiAction(
+      requestingUser,
+      targetUserId,
+      variant.id,
+      {
+        label: 'CUSTOM',
+        changeSummary: 'Snapshot before running ATS analysis',
+        jobTargetId: jobTarget.id,
+      },
+    );
+
     const content = (variant.content ?? {}) as Record<string, unknown>;
     const searchableText = buildSearchableText(content);
     const resumeSkillNames = extractNames(content.skills, 'name');

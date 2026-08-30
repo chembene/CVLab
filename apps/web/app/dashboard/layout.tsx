@@ -2,11 +2,14 @@
 
 import { useEffect, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
-import { Button } from '@cvlab/ui';
-import { useAuth } from '../../lib/auth-context';
+import { useAuth } from '@/lib/auth-context';
+import { Sidebar } from '@/components/layout/sidebar';
+import { Topbar } from '@/components/layout/topbar';
+import { Footer } from '@/components/layout/footer';
+import { Skeleton } from '@/components/ui/skeleton';
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
-  const { user, isLoading, logout } = useAuth();
+  const { user, isLoading } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
@@ -17,41 +20,29 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 
   if (isLoading || !user) {
     return (
-      <main className="flex min-h-screen items-center justify-center">
-        <p className="text-sm text-slate-600 dark:text-slate-400" aria-live="polite">
-          A carregar…
-        </p>
+      <main
+        className="flex min-h-screen items-center justify-center"
+        aria-live="polite"
+        aria-busy="true"
+      >
+        <div className="w-full max-w-sm space-y-4 px-6">
+          <Skeleton className="h-8 w-2/3" />
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-5/6" />
+        </div>
+        <span className="sr-only">A carregar…</span>
       </main>
     );
   }
 
   return (
-    <div className="min-h-screen">
-      <header className="border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-        <div className="mx-auto flex max-w-4xl items-center justify-between px-4 py-3">
-          <nav className="flex gap-4 text-sm font-medium">
-            <a
-              href="/dashboard/profile"
-              className="text-slate-700 hover:text-blue-700 dark:text-slate-300"
-            >
-              Perfil
-            </a>
-            <a
-              href="/dashboard/resume"
-              className="text-slate-700 hover:text-blue-700 dark:text-slate-300"
-            >
-              Currículo
-            </a>
-          </nav>
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-slate-600 dark:text-slate-400">{user.email}</span>
-            <Button variant="ghost" onClick={() => logout().then(() => router.replace('/login'))}>
-              Sair
-            </Button>
-          </div>
-        </div>
-      </header>
-      <div className="mx-auto max-w-4xl px-4 py-8">{children}</div>
+    <div className="flex min-h-screen">
+      <Sidebar />
+      <div className="flex min-w-0 flex-1 flex-col">
+        <Topbar />
+        <main className="container flex-1 py-6">{children}</main>
+        <Footer />
+      </div>
     </div>
   );
 }

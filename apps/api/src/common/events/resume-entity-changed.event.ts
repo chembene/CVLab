@@ -1,10 +1,35 @@
 export const RESUME_ENTITY_CHANGED_EVENT = 'resume.entity.changed';
 
 // 'archived'/'status_changed' added in Phase 2B for JobTarget/Application;
-// 'restored' added in Phase 3 for ResumeVariant — each finer-grained than
-// 'updated' where the brief calls out a specific event name.
+// 'restored' added in Phase 3 for ResumeVariant; 'started'/'completed'/
+// 'failed'/'applied' added in Phase 7 for Resume Optimization (entityType
+// 'optimization'/'suggestion'); 'generated' added in Phase 8 for Cover
+// Letter (entityType 'cover_letter', fired by both generate() and
+// regenerate()); 'submitted' added in Phase 9 for Interview Preparation
+// (entityType 'answer'); 'imported'/'confirmed'/'discarded' added in
+// Phase 10.5 for CV Import (entityType 'cv_import') and 'switched' for
+// Template Engine (entityType 'resume_variant'/'cover_letter') — each
+// finer-grained than 'updated' where the brief calls out a specific event
+// name.
 export type ResumeEntityAction =
-  'created' | 'updated' | 'deleted' | 'archived' | 'status_changed' | 'restored';
+  | 'created'
+  | 'updated'
+  | 'deleted'
+  | 'archived'
+  | 'status_changed'
+  | 'restored'
+  | 'started'
+  | 'completed'
+  | 'failed'
+  | 'applied'
+  | 'generated'
+  | 'submitted'
+  | 'imported'
+  | 'confirmed'
+  | 'merged'
+  | 'replaced'
+  | 'discarded'
+  | 'switched';
 
 /**
  * Generic domain event shared by Profile, MasterResume, every resume

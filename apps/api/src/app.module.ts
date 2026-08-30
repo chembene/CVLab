@@ -14,8 +14,23 @@ import { MasterResumeModule } from './master-resume/master-resume.module';
 import { ResumeSectionsModule } from './resume-sections/resume-sections.module';
 import { JobTargetModule } from './job-target/job-target.module';
 import { ResumeVariantModule } from './resume-variant/resume-variant.module';
+import { ResumeVersionModule } from './resume-version/resume-version.module';
 import { ApplicationModule } from './application/application.module';
 import { AtsModule } from './ats/ats.module';
+import { BillingModule } from './billing/billing.module';
+import { AiRequestTrackingModule } from './ai-request-tracking/ai-request-tracking.module';
+import { CreditsModule } from './credits/credits.module';
+import { AiOrchestrationModule } from './ai-orchestration/ai-orchestration.module';
+import { ResumeOptimizationModule } from './resume-optimization/resume-optimization.module';
+import { CoverLetterModule } from './cover-letter/cover-letter.module';
+import { InterviewModule } from './interview/interview.module';
+import { CvImportModule } from './cv-import/cv-import.module';
+import { JobImportModule } from './job-import/job-import.module';
+import { TemplateEngineModule } from './template-engine/template-engine.module';
+import { ExportModule } from './export/export.module';
+import { ApplicationPipelineModule } from './application-pipeline/application-pipeline.module';
+import { PaymentsModule } from './payments/payments.module';
+import { CareerAdvisorModule } from './career-advisor/career-advisor.module';
 
 @Module({
   imports: [
@@ -39,9 +54,24 @@ import { AtsModule } from './ats/ats.module';
     MasterResumeModule,
     ResumeSectionsModule,
     JobTargetModule,
+    TemplateEngineModule,
     ResumeVariantModule,
+    ResumeVersionModule,
     ApplicationModule,
     AtsModule,
+    BillingModule,
+    AiRequestTrackingModule,
+    CreditsModule,
+    AiOrchestrationModule,
+    ResumeOptimizationModule,
+    CoverLetterModule,
+    InterviewModule,
+    CvImportModule,
+    JobImportModule,
+    ExportModule,
+    ApplicationPipelineModule,
+    PaymentsModule,
+    CareerAdvisorModule,
   ],
   providers: [
     {

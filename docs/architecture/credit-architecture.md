@@ -1,6 +1,6 @@
 # CVLab AI — Credit Architecture
 
-Status: resolved decision (approved 2026-07-30). Supersedes the "Credits never depends on Payments" summary in [module-boundaries.md](module-boundaries.md) with full detail, and resolves the credit-consumption-failure rule flagged as an open question in the prior pass.
+Status: resolved decision (approved 2026-07-30); **implemented, Phase 5** (2026-08-02) — see [module-boundaries.md](module-boundaries.md) Credits row and [database-overview.md](database-overview.md) for the concrete schema/service mapping. Supersedes the "Credits never depends on Payments" summary in [module-boundaries.md](module-boundaries.md) with full detail, and resolves the credit-consumption-failure rule flagged as an open question in the prior pass.
 
 ## 1. Principle
 
@@ -15,28 +15,42 @@ Credits   ──never calls──▶  Payments / any PaymentProvider
 
 Credits can enter a wallet through exactly these ledger transaction types (`prompts/11-credit-system.md` §6):
 
-| Type | Trigger | Who initiates |
-|---|---|---|
-| `PURCHASE` | A `PaymentCompleted` domain event for a completed payment | Payments (via event) → Credits |
-| `BONUS` | Bundled with a `PURCHASE` for packages that include bonus credits (e.g. package 2: 450 base + 100 bonus) | Credits, at purchase time |
-| `PROMOTION` | Marketing/promotional grant | Admin-triggered, audited |
-| `ADMIN_ADJUSTMENT` | Manual correction | Admin-triggered, audited, requires reason |
-| `REFUND` | A previously consumed operation is refunded per §4 below | Feature module (via Credits' refund method), or Admin |
-| `REVERSAL` | A previously granted `PURCHASE`/`BONUS` is reversed (e.g. charge dispute) | Admin/Payments-triggered, audited |
+| Type               | Trigger                                                                                                                                                                                                                           | Who initiates                                         | Implemented by (Phase 5)                                                                                                                                                                                                |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PURCHASE`         | A confirmed payment (Payments & Credits phase: `PaymentService.confirmPayment()`, called from either a provider webhook or a manual `verify()` poll — no separate `PaymentCompleted` domain event was needed, the call is direct) | Payments → Credits                                    | `CreditService.allocateFromPurchase()` — built Phase 5, **called for real since the Payments & Credits phase** (`apps/api/src/payments/payment.service.ts`)                                                             |
+| `BONUS`            | Bundled with a `PURCHASE` for packages that include bonus credits (e.g. package 2: 450 base + 100 bonus)                                                                                                                          | Credits, at purchase time                             | same method, computed from `credit_packages.bonus_credits`                                                                                                                                                              |
+| `PROMOTION`        | Marketing/promotional grant                                                                                                                                                                                                       | Admin-triggered, audited                              | `CreditService.adjustBalance()` with `type: PROMOTION`                                                                                                                                                                  |
+| `ADMIN_ADJUSTMENT` | Manual correction                                                                                                                                                                                                                 | Admin-triggered, audited, requires reason             | `CreditService.adjustBalance()` with `type: ADMIN_ADJUSTMENT` — `POST /admin/credits/adjust`                                                                                                                            |
+| `REFUND`           | A previously consumed operation is refunded per §4 below                                                                                                                                                                          | Feature module (via Credits' refund method), or Admin | `RefundService.refund()`, auto-invoked by `CreditService.spendAndExecute()` on failure — see §4                                                                                                                         |
+| `REVERSAL`         | A previously granted `PURCHASE`/`BONUS` is reversed (e.g. charge dispute)                                                                                                                                                         | Admin/Payments-triggered, audited                     | `CreditService.reverse()` — built and tested, **still not called by anything** (no chargeback/dispute flow exists yet — out of scope for the Payments & Credits phase, which only wired the purchase-confirmation path) |
 
-`CONSUMPTION` (feature usage) and `EXPIRATION` (architecture-only, disabled in MVP per `prompts/11-credit-system.md` §13) round out the full type list from the source rules.
+`CONSUMPTION` (feature usage — `CreditService.spend()` / `spendAndExecute()`) and `EXPIRATION` (architecture-only, disabled in MVP per `prompts/11-credit-system.md` §13, not implemented) round out the full type list from the source rules.
 
 **Money logic and credit logic are never mixed in the same service method.** Payments decides "is this transaction financially valid" (provider verification, idempotent-by-reference). Credits decides "how many credits does this event grant" (package lookup, bonus calculation). The boundary is a single call: `Payments` → `Credits.allocateFromPurchase(userId, packageId, paymentId)`, where `Credits` looks up the package's `total_credits` itself — Payments never computes or passes a raw credit number.
 
 ## 3. Wallet + Ledger
 
-- `credit_wallets`: one row per user — `available_credits`, `lifetime_credits_purchased`, `lifetime_credits_consumed`. Never negative.
+- `credit_wallets`: one row per user (lazily created via `WalletRepository.ensureWallet()` on first access) — `available_credits`, `lifetime_credits_purchased`, `lifetime_credits_consumed`. Never negative.
 - `credit_transactions`: append-only ledger, the system of record (`prompts/11-credit-system.md` §20 "Golden Rule"). Every wallet mutation happens **only** as a side effect of inserting a ledger row inside the same DB transaction — the wallet balance is a derived/cached total, never updated independently.
 - Every credit-consuming operation carries an **idempotency key**; the same key can never deduct credits twice (`credit_transactions.idempotency_key` is unique).
+
+### Concurrency mechanism (implemented, Phase 5)
+
+Spending/debiting is concurrency-safe via an **atomic conditional `UPDATE`** rather than a version column + retry loop — the balance check and the decrement happen as a single Postgres statement, so there is no read-then-write race window to protect against in the first place:
+
+```sql
+UPDATE credit_wallets
+SET available_credits = available_credits - :amount, ...
+WHERE user_id = :userId AND available_credits >= :amount
+```
+
+Expressed in Prisma as `prisma.creditWallet.updateMany({ where: { userId, availableCredits: { gte: amount } }, data: { availableCredits: { decrement: amount }, ... } })`. The returned `count` (0 or 1) signals success/failure — `count === 0` means either the wallet doesn't exist or the balance was insufficient at the instant of the update, both of which the caller treats as `InsufficientCreditsException`. This gives the same guarantee an optimistic-locking version column would (no double-spend under concurrent requests) without needing a separate version field or a retry loop; verified directly against real Postgres by `credit-engine.e2e-spec.ts` (5 parallel spends of 30 credits against a balance of 100 → exactly 3 succeed, 2 rejected). `WalletRepository` exposes this as two variants: `trySpend()` (also increments `lifetime_credits_consumed`, used for real `CONSUMPTION`) and `tryDebit()` (leaves `lifetime_credits_consumed` untouched, used for `REVERSAL` and negative `ADMIN_ADJUSTMENT`).
 
 ## 4. Credit Consumption Failure Rule (resolved)
 
 **Rule:** if the platform fails for an internal/technical reason, the user's credits are never lost. If the user's input is invalid, credits should not have been charged in the first place.
+
+**Implemented, Phase 5, as spend-then-auto-refund rather than a separate pending-reservation state.** `CreditService.spendAndExecute<T>(userId, params, work: () => Promise<T>): Promise<T>` spends the credits atomically (a real `CONSUMPTION` transaction, not a placeholder "reservation" row), runs `work()`, and — if `work()` throws — automatically calls `RefundService.refund()` (idempotency key `refund:${originalKey}`, `reference` pointing at the original transaction) before rethrowing the original error. This nets to the same outcome as a RESERVE→RELEASE flow (zero cost to the user on platform failure) without needing a distinct `PENDING`/reservation ledger state: the ledger always shows either a lone `CONSUMPTION` (success) or a `CONSUMPTION` immediately followed by its own `REFUND` (failure), both visible and auditable. A second independent guard, `CreditTransactionRepository.findByReferenceAndType(originalTransactionId, 'REFUND')`, prevents double-refunding the same original transaction even if `spendAndExecute()` were somehow invoked twice for it.
 
 Concretely, using the RESERVE → PROCESS → COMMIT/RELEASE pattern from `prompts/11-credit-system.md` §10:
 
@@ -55,29 +69,47 @@ Both are **database-backed configuration**, never hardcoded in frontend code or 
 ### Initial `credit_packages` seed data
 
 | Package | Price (MT) | Base credits | Bonus credits | Total credits |
-|---|---|---|---|---|
-| 1 | 100 | 200 | 0 | 200 |
-| 2 | 250 | 450 | 100 | 550 |
-| 3 | 500 | 1000 | 200 | 1200 |
-| 4 | 1000 | 2000 | 600 | 2600 |
-| 5 | 2000 | 4000 | 1500 | 5500 |
+| ------- | ---------- | ------------ | ------------- | ------------- |
+| 1       | 100        | 200          | 0             | 200           |
+| 2       | 250        | 450          | 100           | 550           |
+| 3       | 500        | 1000         | 200           | 1200          |
+| 4       | 1000       | 2000         | 600           | 2600          |
+| 5       | 2000       | 4000         | 1500          | 5500          |
 
-### Initial `feature_pricing` seed data
+### `feature_pricing` — actually implemented values (corrected, AI Credit Consumption & Monetization phase)
 
-| Feature | Cost (credits) |
-|---|---|
-| CV improvement suggestion | 30 |
-| CV creation | 40 |
-| Cover letter | 25 |
-| CV translation | 20 |
-| ATS analysis | 35 |
-| Professional summary | 20 |
-| Career suggestion | 15 |
-| Interview practice | 60 |
-| Technical test | 40 |
-| PDF premium export | 10 |
+The table this section carried since Phase 5 named features that were never built under those names ("CV improvement suggestion", "CV creation", "CV translation", "Professional summary" — none exist in the shipped feature set) and, for the ones that do correspond to a real feature, priced at least one of them wrong (Cover Letter: 25 here vs. 40 actually charged). Per the AI Credit Consumption & Monetization phase's audit — a fresh, direct read of `apps/api/src/ai-orchestration/pipeline/ai-orchestration.service.ts` plus every feature's own e2e `beforeAll` seeding — the table below replaces it with what is actually implemented and tested today. This is a documentation correction only; no `feature_pricing` row, no code, and no test was changed to produce it.
 
-These are **seed/initial values** for the `credit_packages` and `feature_pricing` tables, loaded via a seed script at Phase 3 implementation time — not constants embedded in code. Admins can change them through an audited update path; price changes never retroactively affect already-completed payments or already-charged consumptions (the ledger row captures the cost/amount at the time of the transaction, immutably).
+| Feature                             | `AIFeature` key             | Cost (credits) | Charged via                                                                                                                                                                                      |
+| ----------------------------------- | --------------------------- | -------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Resume Optimization                 | `resume_optimization`       |             80 | `AiOrchestrationService`                                                                                                                                                                         |
+| Cover Letter                        | `cover_letter`              |             40 | `AiOrchestrationService`                                                                                                                                                                         |
+| Interview — Resume mode, Questions  | `interview_questions`       |             30 | `AiOrchestrationService`                                                                                                                                                                         |
+| Interview — Resume mode, Evaluation | `interview_evaluation`      |             30 | `AiOrchestrationService`                                                                                                                                                                         |
+| Interview — Job mode, Questions     | `interview_questions_job`   |             25 | `AiOrchestrationService`                                                                                                                                                                         |
+| Interview — Job mode, Evaluation    | `interview_evaluation_job`  |             25 | `AiOrchestrationService`                                                                                                                                                                         |
+| Interview — Role mode, Questions    | `interview_questions_role`  |             20 | `AiOrchestrationService`                                                                                                                                                                         |
+| Interview — Role mode, Evaluation   | `interview_evaluation_role` |             20 | `AiOrchestrationService`                                                                                                                                                                         |
+| Resume Export — PDF                 | `export_resume_pdf`         |             10 | `CreditService` directly (not an AI feature — see module-boundaries.md's Export Engine exception)                                                                                                |
+| Resume Export — DOCX                | `export_resume_docx`        |              5 | `CreditService` directly                                                                                                                                                                         |
+| Career Advisor                      | `career_advisor`            |             30 | `AiOrchestrationService` — FASE 18, price approved by the user (not derived/inherited from the earlier "15" test-fixture value, which was confirmed arbitrary — see career-advisor-engine.md §5) |
+
+**Free by design — never charged, not a pricing gap:**
+
+| Feature                    | Why                                                                                                                                                                                                   |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ATS Analysis               | 100% deterministic, rule-based, no AI/OpenAI call anywhere in the module                                                                                                                              |
+| CV Import                  | Deterministic PDF/DOCX extraction, no AI — `credits_used` is always 0                                                                                                                                 |
+| Job Import                 | Deterministic fetch/parse, no AI                                                                                                                                                                      |
+| Smart Application Pipeline | Never charges on its own — pure orchestration; each step it delegates to (ATS/Resume Optimization/Cover Letter/Interview/Export) charges through its own already-listed mechanism above, exactly once |
+
+**Not implemented yet — no price to report, none invented:** LinkedIn-related features, `ATS_AI` (an AI-assisted variant of the deterministic ATS engine above — distinct from it), Template Recommendation. Each already has a reserved `AIFeature` enum key (`linkedin`, `ats_ai`, `template_recommendation`) so a future `PromptBuilder` has a fixed contract to register against, but none is registered, none has a controller route, and none should be read as "currently active" until it is. (Career Advisor was in this list as of the AI Credit Consumption & Monetization phase — it is now implemented, see the table above.)
+
+These are **seed/initial values** for the `credit_packages` and `feature_pricing` tables — not constants embedded in code. Admins can change them through an audited update path; price changes never retroactively affect already-completed payments or already-charged consumptions (the ledger row captures the cost/amount at the time of the transaction, immutably).
+
+**Still open, unchanged by this correction:** no `credit_packages`/`feature_pricing` seed script exists yet (known since Phase 5, explicitly not closed by the Payments & Credits phase's own Decision 4, and out of scope for this documentation-only phase too). Whichever phase first writes that seed script must source each feature's price from the table above (or from a fresher direct code read, if this one has drifted by then), never from `prompts/11-credit-system.md` §3 without cross-checking against real code first.
+
+**Known gap (Phase 5):** `FeaturePricingRepository` (read path) and the `credit_packages`/`feature_pricing` tables themselves are implemented, but no seed script has been written yet — both tables are empty in a fresh environment. `CreditService.estimate()` and `allocateFromPurchase()` are fully built and unit/e2e-tested against manually-inserted rows, but there is nothing to actually price a real feature or package until a seed script (or an Admin-facing create/update path) is added, likely alongside whichever future phase first calls these read paths for real (a paid AI feature, or the Payments module).
 
 ## 6. Security Invariants (restated from source rules, non-negotiable)
 

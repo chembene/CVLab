@@ -29,6 +29,7 @@ describe('ApplicationService', () => {
     } as unknown as jest.Mocked<JobTargetService>;
     resumeVariantService = {
       assertOwnedVariant: jest.fn(),
+      snapshotForApplication: jest.fn(),
     } as unknown as jest.Mocked<ResumeVariantService>;
     eventEmitter = { emit: jest.fn() };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -80,6 +81,7 @@ describe('ApplicationService', () => {
     it('verifies resume variant ownership when resumeVariantId is provided', async () => {
       jobTargetService.assertOwnedJobTarget.mockResolvedValue({ id: 'jt-1' } as never);
       resumeVariantService.assertOwnedVariant.mockResolvedValue({ id: 'rv-1' } as never);
+      resumeVariantService.snapshotForApplication.mockResolvedValue({ id: 'version-1' } as never);
       repository.create.mockResolvedValue({ id: 'app-1' } as never);
 
       await service.create(owner, 'user-1', {
@@ -88,6 +90,26 @@ describe('ApplicationService', () => {
       } as never);
 
       expect(resumeVariantService.assertOwnedVariant).toHaveBeenCalledWith(owner, 'user-1', 'rv-1');
+    });
+
+    it('takes a fresh APPLICATION_VERSION snapshot and permanently references it via resumeVariantVersionId (Phase 10.5 rule 9)', async () => {
+      jobTargetService.assertOwnedJobTarget.mockResolvedValue({ id: 'jt-1' } as never);
+      resumeVariantService.assertOwnedVariant.mockResolvedValue({ id: 'rv-1' } as never);
+      resumeVariantService.snapshotForApplication.mockResolvedValue({ id: 'version-9' } as never);
+      repository.create.mockResolvedValue({ id: 'app-1' } as never);
+
+      await service.create(owner, 'user-1', {
+        jobTargetId: 'jt-1',
+        resumeVariantId: 'rv-1',
+      } as never);
+
+      expect(resumeVariantService.snapshotForApplication).toHaveBeenCalledWith(
+        owner,
+        'user-1',
+        'rv-1',
+      );
+      const call = repository.create.mock.calls[0];
+      expect(call?.[2].resumeVariantVersionId).toBe('version-9');
     });
 
     it('does not create when the referenced resume variant is not owned by the target user', async () => {
@@ -172,6 +194,41 @@ describe('ApplicationService', () => {
       await expect(service.update(owner, 'user-1', 'app-1', {} as never)).rejects.toBeInstanceOf(
         NotFoundException,
       );
+    });
+
+    it('re-snapshots and stores a new resumeVariantVersionId when a resumeVariantId is (re-)attached', async () => {
+      repository.findById.mockResolvedValue({
+        id: 'app-1',
+        userId: 'user-1',
+        status: ApplicationStatus.SAVED,
+      } as never);
+      resumeVariantService.assertOwnedVariant.mockResolvedValue({ id: 'rv-2' } as never);
+      resumeVariantService.snapshotForApplication.mockResolvedValue({ id: 'version-2' } as never);
+      repository.update.mockResolvedValue({ id: 'app-1' } as never);
+
+      await service.update(owner, 'user-1', 'app-1', { resumeVariantId: 'rv-2' } as never);
+
+      expect(resumeVariantService.assertOwnedVariant).toHaveBeenCalledWith(owner, 'user-1', 'rv-2');
+      expect(resumeVariantService.snapshotForApplication).toHaveBeenCalledWith(
+        owner,
+        'user-1',
+        'rv-2',
+      );
+      const call = repository.update.mock.calls[0];
+      expect(call?.[1].resumeVariantVersionId).toBe('version-2');
+    });
+
+    it('does not re-snapshot when resumeVariantId is absent from the update DTO', async () => {
+      repository.findById.mockResolvedValue({
+        id: 'app-1',
+        userId: 'user-1',
+        status: ApplicationStatus.SAVED,
+      } as never);
+      repository.update.mockResolvedValue({ id: 'app-1' } as never);
+
+      await service.update(owner, 'user-1', 'app-1', { notes: 'x' } as never);
+
+      expect(resumeVariantService.snapshotForApplication).not.toHaveBeenCalled();
     });
   });
 

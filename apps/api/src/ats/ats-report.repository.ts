@@ -30,6 +30,14 @@ export class AtsReportRepository {
     return this.prisma.atsReport.findUnique({ where: { id } });
   }
 
+  /** Most recent report for one Resume Variant — used by ResumeOptimizationService to reuse a "before" baseline instead of always re-running ATS (see the `force` input flag). */
+  findLatestByVariantId(resumeVariantId: string): Promise<AtsReport | null> {
+    return this.prisma.atsReport.findFirst({
+      where: { resumeVariantId },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
   create(
     userId: string,
     resumeVariantId: string,

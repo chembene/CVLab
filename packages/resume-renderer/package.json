@@ -1,0 +1,23 @@
+{
+  "name": "@cvlab/resume-renderer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Framework-agnostic resume/cover-letter rendering engine (theme resolution + layouts + renderer components) shared between apps/web (live preview, browser) and apps/api (Export Engine PDF generation, Node SSR) — one rendering implementation, per docs/architecture/export-engine.md \"Rendering\". Moved out of apps/web unchanged during Export Engine PASSO 3, not rewritten.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint \"src/**/*.{ts,tsx}\""
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "lucide-react": "^1.28.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "typescript": "^5.4.5"
+  }
+}

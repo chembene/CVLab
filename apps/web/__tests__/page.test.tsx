@@ -1,6 +1,6 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import HomePage from '../app/page';
-import { AuthProvider } from '../lib/auth-context';
+import { renderWithProviders } from '../lib/test-utils';
 
 function mockFetchOnce(body: unknown, status = 200): void {
   global.fetch = jest
@@ -13,18 +13,18 @@ describe('HomePage', () => {
     jest.restoreAllMocks();
   });
 
-  it('renders the CVLab AI heading', async () => {
+  it('renders the CVLab AI heading and sign-in/sign-up links when logged out', async () => {
     mockFetchOnce({ success: false, error: { code: 'UNAUTHORIZED', message: 'No session.' } }, 401);
-    render(
-      <AuthProvider>
-        <HomePage />
-      </AuthProvider>,
+    renderWithProviders(<HomePage />);
+
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/oportunidade/i);
+    await waitFor(() =>
+      expect(screen.getAllByRole('link', { name: 'Entrar' })[0]).toBeInTheDocument(),
     );
-    expect(screen.getByRole('heading', { level: 1, name: /cvlab ai/i })).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText('Ainda não iniciou sessão.')).toBeInTheDocument());
+    expect(screen.getAllByRole('link', { name: 'Criar conta' })[0]).toBeInTheDocument();
   });
 
-  it('shows the logged-in state once the session is restored', async () => {
+  it('shows a link to the dashboard once the session is restored', async () => {
     mockFetchOnce({
       success: true,
       data: {
@@ -38,11 +38,10 @@ describe('HomePage', () => {
         accessToken: 'token',
       },
     });
-    render(
-      <AuthProvider>
-        <HomePage />
-      </AuthProvider>,
+    renderWithProviders(<HomePage />);
+
+    await waitFor(() =>
+      expect(screen.getByRole('link', { name: /ir para o painel/i })).toBeInTheDocument(),
     );
-    await waitFor(() => expect(screen.getByText(/user@example.com/)).toBeInTheDocument());
   });
 });

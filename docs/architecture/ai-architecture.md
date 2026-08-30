@@ -2,6 +2,18 @@
 
 Status: resolved decision (approved 2026-07-30). Resolves the "ai_requests table named nowhere in the prompts" gap flagged in the prior pass, per `prompts/03-ai-prompts.md` §"Cost Control".
 
+**Phase 5 update (2026-08-02):** the `ai_requests` tracking table (§4 below) has been extended and its write path implemented as `AiRequestTrackingService` (`apps/api/src/ai-request-tracking/`) — `start()`/`complete()`/`fail()`/`recordRefund()`, with an idempotent `start()`. **No real OpenAI/AI calls exist yet anywhere in the codebase** — this phase only prepared the tracking/metadata infrastructure a future `AI` module (§1-3 below) will call around its actual provider calls. There is no controller; nothing outside the (not-yet-built) `AI` module is expected to call this service.
+
+**Phase 6 update (2026-08-02):** §3's pseudocode below is now superseded by a real, implemented orchestration engine — see **[ai-orchestration.md](ai-orchestration.md)** for the full design (provider abstraction, prompt engine, execution pipeline, retry policy, cache abstraction, error hierarchy). `AiOrchestrationService.execute()` is now the one and only path any AI feature is allowed to use; §1's "single point of contact with the OpenAI API" is fulfilled today by `DummyAIProvider`, a deterministic placeholder — **still no real OpenAI/AI calls exist anywhere in the codebase.** `ai_requests` gained `prompt_version` this phase (§4 below).
+
+**Phase 7 update (2026-08-02):** the first real AI feature — AI Resume Optimization — is now implemented on top of the Phase 6 engine, see **[resume-optimization.md](resume-optimization.md)**. §7's "AI Response Contract" (score/analysis/suggestions/improvement actions) is now a real, enforced JSON schema (`ResumeOptimizationResponseParser`), not just a documented expectation. §8's Integrity Rule is now structurally testable — `ResumeSuggestionApplier` only ever writes AI-_suggested_ text into the fields a user explicitly accepts, never silently. **Still `DummyAIProvider` only — no real OpenAI/Anthropic/Gemini call exists anywhere in the codebase.**
+
+**Phase 8 update (2026-08-02):** the second real AI feature — AI Cover Letter — is now implemented on the identical template, see **[cover-letter-engine.md](cover-letter-engine.md)**. `AIFeature.COVER_LETTER` (reserved since Phase 6) now has its first real `PromptBuilder`. §7's "AI Response Contract" gains a second concrete realization: `{ title, coverLetter, summary }`, validated by `CoverLetterResponseParser`. `DummyAIProvider`'s JSON envelope (§3/§4 below, full detail in [ai-orchestration.md](ai-orchestration.md) §2) is now a superset covering both features' contracts at once, without the provider itself knowing either feature exists — the concrete proof that "provider-agnostic, JSON-mode-capable" scales past a single feature. **Still `DummyAIProvider` only — no real OpenAI/Anthropic/Gemini call exists anywhere in the codebase.**
+
+**Phase 9 update (2026-08-03):** the third real AI feature — AI Interview Preparation — is now implemented, see **[interview-engine.md](interview-engine.md)**. Two new `AIFeature` values (`INTERVIEW_QUESTIONS`, `INTERVIEW_EVALUATION`) and two `PromptBuilder`s — the first feature needing more than one AI operation, proving `AiOrchestrationService`'s "one builder per feature key" design scales cleanly. §4's `ai_requests` model is unchanged this phase (no new columns) — its `feature` column simply now also sees these two new key values. `DummyAIProvider` gained array-count-aware sizing for `questions[]`/`evaluations[]` (still fully generic, see [ai-orchestration.md](ai-orchestration.md) §2). **Still `DummyAIProvider` only — no real OpenAI/Anthropic/Gemini call exists anywhere in the codebase.**
+
+**FASE 18 update (2026-08-27):** the fourth real AI feature — Career Advisor — is now implemented on the identical template, see **[career-advisor-engine.md](career-advisor-engine.md)**. `AIFeature.CAREER_ADVISOR` (reserved since Phase 6, previously used only as arbitrary test-fixture data) now has its first real `PromptBuilder`. Unlike every prior feature, its context is entirely optional and assembled from up to 8 other modules (Profile, Master Resume, Resume Sections, Job Targets, Resume Variants, Applications, ATS Reports, Interview Sessions) rather than requiring a specific Resume Variant/Job Target — it is the first feature whose only required input is the user themself. §7's "AI Response Contract" gains a third concrete realization: `{ summary, currentAssessment, strengths[], gaps[], recommendations[], nextSteps[] }`, validated by `CareerAdvisorResponseParser`. `DummyAIProvider`'s JSON envelope gained these 5 new fields (same precedented, additive extension as Phase 9's `questions[]`/`evaluations[]`). A new `career_advice` table persists each request's question + structured response (see career-advisor-engine.md §4 for why `ai_requests` alone was confirmed insufficient). **Still `DummyAIProvider` only — no real OpenAI/Anthropic/Gemini call exists anywhere in the codebase.**
+
 ## 1. Responsibility
 
 The AI module is the single point of contact with the OpenAI API for CV improvement, cover letter generation, ATS analysis, interview question generation/evaluation, and career suggestions (`prompts/03-ai-prompts.md`, `prompts/09-product-vision.md` §5). No other module calls OpenAI directly.
@@ -12,7 +24,7 @@ All prompt templates are stored as data/config, not inline strings in business l
 
 ## 3. Credit Integration
 
-Every credit-consuming AI operation follows the RESERVE → PROCESS → COMMIT/RELEASE flow owned by Credits (see [credit-architecture.md](credit-architecture.md) §4) — the AI module never mutates wallet/ledger state itself, it only calls `Credits`' public methods around the OpenAI call:
+Every credit-consuming AI operation follows the RESERVE → PROCESS → COMMIT/RELEASE flow owned by Credits (see [credit-architecture.md](credit-architecture.md) §4) — the AI module never mutates wallet/ledger state itself, it only calls `Credits`' public methods around the OpenAI call. **As of Phase 6, this is no longer illustrative pseudocode** — it is `AiOrchestrationService.execute()`'s real 11-step pipeline, with `CreditService.spendAndExecute()` wrapping steps 5–10 and `AiRequestTrackingService.start()`/`complete()`/`fail()` bracketing the actual provider call to record provider/model/token/cost metadata independently of the credit ledger. See [ai-orchestration.md](ai-orchestration.md) §4 for the full step-by-step mapping — the pseudocode below is kept only as the original conceptual illustration this section opened with:
 
 ```
 Feature service (e.g. CVs.improve)
@@ -27,21 +39,25 @@ Feature service (e.g. CVs.improve)
 
 A dedicated tracking table exists purely for cost tracking, usage analytics, debugging, auditing, and credit reconciliation — it is not part of the credit ledger itself (that's `credit_transactions`), but the two are cross-referenced.
 
-| Field | Purpose |
-|---|---|
-| `id` | |
-| `user_id` | FK → `users` |
-| `feature` | e.g. `cv_improvement`, `ats_analysis`, `interview_evaluation` |
-| `status` | `PENDING` / `SUCCEEDED` / `FAILED` / `TIMEOUT` |
-| `model` | OpenAI model identifier used |
-| `request_id` | OpenAI's own request/response ID, for support escalation — **not** an API key or credential |
-| `input_tokens` / `output_tokens` / `total_tokens` | usage accounting |
-| `estimated_cost` | computed from token counts × model pricing, stored for internal cost tracking |
-| `credits_charged` | the actual credit amount charged to the user for this request (may be 0 if released/refunded) — cross-references the corresponding `credit_transactions` row via `reference` |
-| `duration_ms` | latency tracking |
-| `created_at` / `completed_at` | |
-| `error_code` | normalized internal error classification on failure (never a raw provider stack trace) |
-| `metadata` | JSONB, feature-specific extra context (never raw user CV content by default — see §5) |
+| Field                                             | Purpose                                                                                                                                                                                                                                                                    |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                                              |                                                                                                                                                                                                                                                                            |
+| `user_id`                                         | FK → `users`                                                                                                                                                                                                                                                               |
+| `feature`                                         | e.g. `cv_improvement`, `ats_analysis`, `interview_evaluation`                                                                                                                                                                                                              |
+| `status`                                          | `PENDING` / `SUCCEEDED` / `FAILED` / `TIMEOUT`                                                                                                                                                                                                                             |
+| `provider`                                        | _(added, Phase 5)_ AI provider name (e.g. `openai`) — anticipates a future non-OpenAI provider the same way `BillingProvider` anticipates non-M-Pesa payment providers, per [module-boundaries.md](module-boundaries.md)                                                   |
+| `model`                                           | OpenAI model identifier used                                                                                                                                                                                                                                               |
+| `request_id`                                      | OpenAI's own request/response ID, for support escalation — **not** an API key or credential                                                                                                                                                                                |
+| `prompt_hash`                                     | _(added, Phase 5)_ hash of the resolved prompt (not the raw text — see §5), for detecting duplicate/retried requests and for analytics without storing prompt content                                                                                                      |
+| `prompt_version`                                  | _(added, Phase 6)_ the `PromptBuilder`/`PromptTemplate` revision that produced `prompt_hash` — see [ai-orchestration.md](ai-orchestration.md) §3. Lets analytics/debugging distinguish "same feature, different prompt revision" without needing the raw prompt text       |
+| `input_tokens` / `output_tokens` / `total_tokens` | usage accounting                                                                                                                                                                                                                                                           |
+| `estimated_cost`                                  | computed from token counts × model pricing, stored for internal cost tracking                                                                                                                                                                                              |
+| `credits_charged`                                 | the actual credit amount charged to the user for this request (may be 0 if released/refunded) — cross-references the corresponding `credit_transactions` row via `reference`                                                                                               |
+| `credits_refunded`                                | _(added, Phase 5)_ credits refunded against this request, if any — written by `AiRequestTrackingService.recordRefund()`, mirrors the `CONSUMPTION`→`REFUND` pair `spendAndExecute()` writes to the credit ledger (see [credit-architecture.md](credit-architecture.md) §4) |
+| `duration_ms`                                     | latency tracking                                                                                                                                                                                                                                                           |
+| `created_at` / `completed_at`                     |                                                                                                                                                                                                                                                                            |
+| `error_code`                                      | normalized internal error classification on failure (never a raw provider stack trace)                                                                                                                                                                                     |
+| `metadata`                                        | JSONB, feature-specific extra context (never raw user CV content by default — see §5)                                                                                                                                                                                      |
 
 Indexes: `user_id`, `(feature, created_at)` for analytics/reporting queries, `status` for operational monitoring of failures.
 
@@ -56,7 +72,9 @@ Indexes: `user_id`, `(feature, created_at)` for analytics/reporting queries, `st
 
 ## 7. AI Response Contract
 
-Per `prompts/03-ai-prompts.md` §"AI Response", every AI feature response includes: score (where applicable), analysis, suggestions, improvement actions — structured output, not free text the frontend has to parse heuristically.
+Per `prompts/03-ai-prompts.md` §"AI Response", every AI feature response includes: score (where applicable), analysis, suggestions, improvement actions — structured output, not free text the frontend has to parse heuristically. **Implemented, Phase 7:** Resume Optimization's `{ summary, predictedScore, suggestions[] }` JSON contract is the first concrete realization of this rule — `predictedScore` is the score, `summary` is the analysis, and each `suggestions[]` entry (`title`/`reason`/`originalText`/`suggestedText`) is one improvement action. `ResumeOptimizationResponseParser` rejects any response violating the contract with `InvalidPromptError` rather than passing malformed data through. See [resume-optimization.md](resume-optimization.md) §7.
+
+**Implemented, Phase 8:** Cover Letter's `{ title, coverLetter, summary }` contract is a second, deliberately simpler realization — no numeric score applies to a cover letter, so it's omitted rather than forced in; `title` and `coverLetter` are the "improvement action" (the actual deliverable), `summary` is the analysis. `CoverLetterResponseParser` follows the identical validate-or-`InvalidPromptError` structure. See [cover-letter-engine.md](cover-letter-engine.md) §5.
 
 ## 8. Integrity Rule (restated)
 

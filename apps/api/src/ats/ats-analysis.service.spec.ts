@@ -25,6 +25,7 @@ describe('AtsAnalysisService', () => {
     } as unknown as jest.Mocked<AtsReportRepository>;
     resumeVariantService = {
       getOne: jest.fn(),
+      snapshotBeforeAiAction: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<ResumeVariantService>;
     jobTargetService = {
       getOne: jest.fn(),
@@ -108,6 +109,32 @@ describe('AtsAnalysisService', () => {
           action: 'created',
           entityId: 'report-1',
         }),
+      );
+    });
+
+    it('auto-snapshots the resume state before running the analysis (Phase 10.5 rule 8, "before ATS rewrite")', async () => {
+      resumeVariantService.getOne.mockResolvedValue({
+        id: 'rv-1',
+        jobTargetId: 'jt-1',
+        completionPercentage: 75,
+        content: {},
+      } as never);
+      jobTargetService.getOne.mockResolvedValue({
+        id: 'jt-1',
+        seniority: 'Mid',
+        keywords: [],
+        skills: [],
+        languages: [],
+      } as never);
+      repository.create.mockResolvedValue({ id: 'report-1' } as never);
+
+      await service.run(owner, 'user-1', { resumeVariantId: 'rv-1' });
+
+      expect(resumeVariantService.snapshotBeforeAiAction).toHaveBeenCalledWith(
+        owner,
+        'user-1',
+        'rv-1',
+        expect.objectContaining({ jobTargetId: 'jt-1' }),
       );
     });
   });

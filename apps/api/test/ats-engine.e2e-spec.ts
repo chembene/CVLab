@@ -44,12 +44,25 @@ describe('ATS Analysis Engine (e2e)', () => {
           select: { id: true },
         });
         const resumeIds = resumes.map((r) => r.id);
+        const variants = await prisma.resumeVariant.findMany({
+          where: { userId: { in: userIds } },
+          select: { id: true },
+        });
+        const variantIds = variants.map((v) => v.id);
 
+        // FK order (Phase 10.5): applications reference both a
+        // ResumeVariant and a ResumeVariantVersion; version rows reference
+        // their ResumeVariant. Neither relation cascades on delete.
         await prisma.$transaction([
           prisma.atsReport.deleteMany({ where: { userId: { in: userIds } } }),
           prisma.application.deleteMany({ where: { userId: { in: userIds } } }),
-          prisma.resumeVariant.deleteMany({ where: { userId: { in: userIds } } }),
         ]);
+        if (variantIds.length > 0) {
+          await prisma.resumeVariantVersion.deleteMany({
+            where: { resumeVariantId: { in: variantIds } },
+          });
+        }
+        await prisma.resumeVariant.deleteMany({ where: { userId: { in: userIds } } });
 
         if (resumeIds.length > 0) {
           await prisma.$transaction([

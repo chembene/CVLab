@@ -39,17 +39,18 @@ export class ApplicationService {
     // A user may only create an application against a job target they own,
     // and — when provided — a resume variant they own.
     await this.jobTargetService.assertOwnedJobTarget(requestingUser, targetUserId, dto.jobTargetId);
-    if (dto.resumeVariantId) {
-      await this.resumeVariantService.assertOwnedVariant(
-        requestingUser,
-        targetUserId,
-        dto.resumeVariantId,
-      );
-    }
+    const resumeVariantVersionId = dto.resumeVariantId
+      ? await this.snapshotResumeVariantForApplication(
+          requestingUser,
+          targetUserId,
+          dto.resumeVariantId,
+        )
+      : undefined;
 
     const { jobTargetId, appliedAt, interviewDate, ...rest } = dto;
     const application = await this.applicationRepository.create(targetUserId, jobTargetId, {
       ...rest,
+      resumeVariantVersionId,
       appliedAt: appliedAt ? new Date(appliedAt) : undefined,
       interviewDate: interviewDate ? new Date(interviewDate) : undefined,
     });
@@ -66,17 +67,22 @@ export class ApplicationService {
   ): Promise<Application> {
     assertOwnerOrAdmin(requestingUser, targetUserId);
     const existing = await this.findOwnedOrThrow(targetUserId, id);
-    if (dto.resumeVariantId) {
-      await this.resumeVariantService.assertOwnedVariant(
-        requestingUser,
-        targetUserId,
-        dto.resumeVariantId,
-      );
-    }
+    // Re-snapshots whenever a resume variant is (re-)attached — e.g. the
+    // application was created before a tailored variant existed yet, or the
+    // applicant switched which variant they're submitting. Each snapshot is
+    // independent and permanent — see snapshotResumeVariantForApplication().
+    const resumeVariantVersionId = dto.resumeVariantId
+      ? await this.snapshotResumeVariantForApplication(
+          requestingUser,
+          targetUserId,
+          dto.resumeVariantId,
+        )
+      : undefined;
 
     const { appliedAt, interviewDate, ...rest } = dto;
     const updated = await this.applicationRepository.update(id, {
       ...rest,
+      resumeVariantVersionId,
       appliedAt: appliedAt ? new Date(appliedAt) : undefined,
       interviewDate: interviewDate ? new Date(interviewDate) : undefined,
     });
@@ -96,6 +102,33 @@ export class ApplicationService {
 
     await this.applicationRepository.softDelete(id);
     this.emit(targetUserId, id, 'deleted');
+  }
+
+  /**
+   * Application snapshot (Phase 10.5 rule 9 / Resume Version History Part
+   * 3) — "Whenever a Resume Variant is submitted to an application:
+   * Application → snapshotForApplication()." Verifies ownership of the
+   * variant, then always takes a brand-new APPLICATION_VERSION snapshot
+   * (never reuses an existing version row) so the exact content submitted
+   * is permanently recoverable via Application.resumeVariantVersionId, even
+   * if the live Resume Variant is edited afterward.
+   */
+  private async snapshotResumeVariantForApplication(
+    requestingUser: RequestUser,
+    targetUserId: string,
+    resumeVariantId: string,
+  ): Promise<string> {
+    await this.resumeVariantService.assertOwnedVariant(
+      requestingUser,
+      targetUserId,
+      resumeVariantId,
+    );
+    const version = await this.resumeVariantService.snapshotForApplication(
+      requestingUser,
+      targetUserId,
+      resumeVariantId,
+    );
+    return version.id;
   }
 
   private async findOwnedOrThrow(targetUserId: string, id: string): Promise<Application> {

@@ -4,6 +4,10 @@ import { PrismaService } from '../prisma/prisma.service';
 
 export interface ApplicationData {
   resumeVariantId?: string;
+  // Phase 10.5 — "Every job application must permanently reference the
+  // exact Resume Version used." Set once via ApplicationService's
+  // snapshotForApplication() call, never edited directly here.
+  resumeVariantVersionId?: string;
   status?: ApplicationStatus;
   appliedAt?: Date;
   interviewDate?: Date;

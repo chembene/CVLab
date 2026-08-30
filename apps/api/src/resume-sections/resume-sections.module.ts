@@ -37,7 +37,10 @@ import { ReferenceController } from './controllers/reference.controller';
   // ResumeSectionsRepository is exported so ResumeVariantModule (Phase 3)
   // can read all 11 live section types when building a Resume Variant's
   // content snapshot — it needs raw section data, not the section-mutation
-  // business logic in ResumeSectionsService.
-  exports: [ResumeSectionsRepository],
+  // business logic in ResumeSectionsService. ResumeSectionsService itself
+  // is exported starting Phase 10.5 so CvImportModule can reuse its
+  // create() (history + completion-recalculation side effects included)
+  // instead of duplicating that logic against the repository directly.
+  exports: [ResumeSectionsRepository, ResumeSectionsService],
 })
 export class ResumeSectionsModule {}

@@ -14,5 +14,9 @@ import { ApplicationRepository } from './application.repository';
   imports: [AuthModule, JobTargetModule, ResumeVariantModule],
   controllers: [ApplicationController],
   providers: [ApplicationRepository, ApplicationService],
+  // Exported for ApplicationPipelineModule (Smart Application Pipeline),
+  // which reuses create() as-is to register the final Application at the
+  // end of the guided wizard — never a second, duplicate creation path.
+  exports: [ApplicationService],
 })
 export class ApplicationModule {}

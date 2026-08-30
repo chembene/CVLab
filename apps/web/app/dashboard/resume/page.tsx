@@ -1,263 +1,300 @@
 'use client';
 
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import { Button, Card, Input, Textarea } from '@cvlab/ui';
-import { apiFetch, ApiError } from '../../../lib/api-client';
-import { SECTION_CONFIGS, SECTION_ORDER } from '../../../lib/section-fields';
-import { SectionManager } from '../../../components/section-manager';
+import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { toast } from 'sonner';
+import { ArrowLeft, FileText, UploadCloud } from 'lucide-react';
+import { PageHeader } from '@/components/page-header';
+import { EmptyState } from '@/components/empty-state';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Card, CardContent } from '@/components/ui/card';
+import { Progress } from '@/components/ui/progress';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { SectionManager } from '@/components/section-manager';
+import { ResumeOverviewCard } from '@/components/resume/ResumeOverviewCard';
+import { SECTION_CONFIGS, SECTION_ORDER, type SectionType } from '@/lib/section-fields';
+import {
+  useMasterResume,
+  useCreateMasterResume,
+  useUpdateMasterResume,
+  useSection,
+} from '@/lib/api/master-resume';
+import { useProfile } from '@/lib/api/profile';
+import { masterResumeSchema, type MasterResumeFormInput } from '@/lib/validation/master-resume';
+import { ApiError } from '@/lib/api-client';
 
-interface MasterResume {
-  id: string;
-  title?: string | null;
-  summary?: string | null;
-  careerLevel?: string | null;
-  yearsExperience?: number | null;
-  desiredPosition?: string | null;
-  desiredSalary?: string | null;
-  currency: string;
-  visibility: string;
-  status: string;
-  completionPercentage: number;
-}
-
-interface FormState {
-  title: string;
-  summary: string;
-  careerLevel: string;
-  yearsExperience: string;
-  desiredPosition: string;
-  desiredSalary: string;
-  currency: string;
-  visibility: string;
-  status: string;
-}
-
-const EMPTY_FORM: FormState = {
-  title: '',
-  summary: '',
-  careerLevel: '',
-  yearsExperience: '',
-  desiredPosition: '',
-  desiredSalary: '',
-  currency: 'MZN',
-  visibility: 'PRIVATE',
-  status: 'DRAFT',
+/** `SectionType` (kebab-case, matches the API route segment) -> the camelCase key ResumeLayout's renderers expect in `content`. */
+const CONTENT_KEYS: Record<SectionType, string> = {
+  'work-experience': 'workExperiences',
+  education: 'educations',
+  skills: 'skills',
+  languages: 'languages',
+  certificates: 'certificates',
+  projects: 'projects',
+  courses: 'courses',
+  awards: 'awards',
+  publications: 'publications',
+  'volunteer-experience': 'volunteerExperiences',
+  references: 'references',
 };
 
-function toFormState(resume: MasterResume): FormState {
-  return {
-    title: resume.title ?? '',
-    summary: resume.summary ?? '',
-    careerLevel: resume.careerLevel ?? '',
-    yearsExperience: resume.yearsExperience != null ? String(resume.yearsExperience) : '',
-    desiredPosition: resume.desiredPosition ?? '',
-    desiredSalary: resume.desiredSalary != null ? String(resume.desiredSalary) : '',
-    currency: resume.currency,
-    visibility: resume.visibility,
-    status: resume.status,
-  };
-}
-
-function toPayload(form: FormState): Record<string, unknown> {
-  return {
-    title: form.title || undefined,
-    summary: form.summary || undefined,
-    careerLevel: form.careerLevel || undefined,
-    yearsExperience: form.yearsExperience === '' ? undefined : Number(form.yearsExperience),
-    desiredPosition: form.desiredPosition || undefined,
-    desiredSalary: form.desiredSalary === '' ? undefined : Number(form.desiredSalary),
-    currency: form.currency || undefined,
-    visibility: form.visibility || undefined,
-    status: form.status || undefined,
-  };
-}
+/** Every section tab after "Resumo" — grouped to match the reference layout's tab bar (a handful up front, the rest need not crowd the bar). */
+const PRIMARY_TABS: SectionType[] = [
+  'work-experience',
+  'education',
+  'skills',
+  'languages',
+  'certificates',
+  'projects',
+];
+const MORE_TABS: SectionType[] = SECTION_ORDER.filter((t) => !PRIMARY_TABS.includes(t));
 
 export default function ResumePage() {
-  const [resume, setResume] = useState<MasterResume | null>(null);
-  const [form, setForm] = useState<FormState>(EMPTY_FORM);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  const { data: resume, isLoading } = useMasterResume();
+  const { data: profile } = useProfile();
+  const createResume = useCreateMasterResume();
+  const updateResume = useUpdateMasterResume();
+  const [view, setView] = useState<'overview' | 'editor'>('overview');
 
-  const loadResume = useCallback(async () => {
-    const data = await apiFetch<MasterResume | null>('/resume');
-    setResume(data);
-    if (data) setForm(toFormState(data));
-    return data;
-  }, []);
+  // Every section's data, fetched once at page level — shares the exact
+  // same react-query cache key SectionManager itself uses
+  // (['resume-section', type]), so this never doubles up network requests;
+  // it's only needed to compose the live preview card's `content` object.
+  // SECTION_ORDER is a fixed, compile-time-known list, so calling one hook
+  // per entry here (rather than inside a .map() callback) keeps the hook
+  // call order stable across renders, as React's rules of hooks require.
+  const workExperience = useSection('work-experience');
+  const education = useSection('education');
+  const skills = useSection('skills');
+  const languages = useSection('languages');
+  const certificates = useSection('certificates');
+  const projects = useSection('projects');
+  const courses = useSection('courses');
+  const awards = useSection('awards');
+  const publications = useSection('publications');
+  const volunteerExperience = useSection('volunteer-experience');
+  const references = useSection('references');
+  const sections: Record<SectionType, ReturnType<typeof useSection>> = {
+    'work-experience': workExperience,
+    education,
+    skills,
+    languages,
+    certificates,
+    projects,
+    courses,
+    awards,
+    publications,
+    'volunteer-experience': volunteerExperience,
+    references,
+  };
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { isSubmitting, isDirty },
+  } = useForm<MasterResumeFormInput>({ resolver: zodResolver(masterResumeSchema) });
 
   useEffect(() => {
-    (async () => {
-      try {
-        await loadResume();
-      } catch (err) {
-        setError(err instanceof ApiError ? err.message : 'Não foi possível carregar o currículo.');
-      } finally {
-        setIsLoading(false);
-      }
-    })();
-  }, [loadResume]);
-
-  function set(key: keyof FormState, value: string) {
-    setForm((prev) => ({ ...prev, [key]: value }));
-    setSuccess(false);
-  }
+    if (resume) {
+      reset({
+        title: resume.title ?? '',
+        summary: resume.summary ?? '',
+        careerLevel: resume.careerLevel ?? '',
+        yearsExperience: resume.yearsExperience != null ? String(resume.yearsExperience) : '',
+        desiredPosition: resume.desiredPosition ?? '',
+        desiredSalary: resume.desiredSalary != null ? String(resume.desiredSalary) : '',
+        currency: resume.currency ?? 'MZN',
+        visibility: resume.visibility ?? 'PRIVATE',
+        status: resume.status ?? 'DRAFT',
+      });
+    }
+  }, [resume, reset]);
 
   async function handleCreate() {
-    setSubmitting(true);
-    setError(null);
     try {
-      await apiFetch('/resume', { method: 'POST', body: JSON.stringify({}) });
-      await loadResume();
+      await createResume.mutateAsync({});
+      toast.success('Currículo mestre criado.');
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Não foi possível criar o currículo.');
-    } finally {
-      setSubmitting(false);
+      toast.error(err instanceof ApiError ? err.message : 'Não foi possível criar o currículo.');
     }
   }
 
-  async function handleSubmit(event: FormEvent) {
-    event.preventDefault();
-    setSubmitting(true);
-    setError(null);
-    setSuccess(false);
+  async function onSubmit(values: MasterResumeFormInput) {
     try {
-      const updated = await apiFetch<MasterResume>('/resume', {
-        method: 'PUT',
-        body: JSON.stringify(toPayload(form)),
-      });
-      setResume(updated);
-      setForm(toFormState(updated));
-      setSuccess(true);
+      const payload = Object.fromEntries(
+        Object.entries(values).map(([k, v]) => [k, v === '' ? undefined : v]),
+      );
+      await updateResume.mutateAsync(payload);
+      toast.success('Currículo guardado com sucesso.');
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Não foi possível guardar o currículo.');
-    } finally {
-      setSubmitting(false);
+      toast.error(err instanceof ApiError ? err.message : 'Não foi possível guardar o currículo.');
     }
   }
 
   if (isLoading) {
-    return <p className="text-sm text-slate-600 dark:text-slate-400">A carregar…</p>;
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-8 w-48" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    );
   }
 
   if (!resume) {
     return (
-      <div className="flex flex-col gap-6">
-        <h1 className="text-2xl font-bold">Currículo</h1>
-        <Card title="Comece o seu currículo mestre">
-          <p className="mb-4 text-sm text-slate-600 dark:text-slate-400">
-            O seu currículo mestre reúne toda a sua informação profissional num único lugar.
-            Currículos específicos serão, no futuro, versões filtradas deste currículo mestre.
-          </p>
-          {error ? (
-            <p role="alert" className="mb-3 text-sm text-red-600 dark:text-red-400">
-              {error}
-            </p>
-          ) : null}
-          <Button onClick={handleCreate} disabled={submitting}>
-            {submitting ? 'A criar…' : 'Criar currículo mestre'}
-          </Button>
-        </Card>
+      <div>
+        <PageHeader
+          title="Currículo Principal"
+          description="A base de todas as suas candidaturas."
+        />
+        <EmptyState
+          icon={FileText}
+          title="Comece o seu currículo principal"
+          description="Reúna toda a sua informação profissional num único lugar. Versões específicas para vagas são criadas a partir deste currículo."
+          action={
+            <div className="flex flex-wrap justify-center gap-2">
+              <Button variant="outline" asChild>
+                <Link href="/dashboard/import-cv">
+                  <UploadCloud className="h-4 w-4" />
+                  Importar CV
+                </Link>
+              </Button>
+              <Button onClick={handleCreate} loading={createResume.isPending}>
+                Preencher manualmente
+              </Button>
+            </div>
+          }
+        />
+      </div>
+    );
+  }
+
+  // Composed once from the same section queries the editor tabs use — see
+  // components/template-engine/layouts/ResumeLayout.tsx for the exact key
+  // names this must match.
+  const previewContent: Record<string, unknown> = {
+    title: resume.title,
+    summary: resume.summary,
+    ...Object.fromEntries(
+      SECTION_ORDER.map((type) => [CONTENT_KEYS[type], sections[type].data ?? []]),
+    ),
+  };
+
+  if (view === 'overview') {
+    return (
+      <div className="space-y-6">
+        <PageHeader
+          title="Currículo Principal"
+          description="A base de todas as suas candidaturas — versões específicas são criadas a partir daqui."
+          actions={
+            <div className="flex w-40 flex-col gap-1">
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span>Completo</span>
+                <span>{resume.completionPercentage}%</span>
+              </div>
+              <Progress value={resume.completionPercentage} />
+            </div>
+          }
+        />
+        <ResumeOverviewCard
+          resume={resume}
+          profile={profile}
+          content={previewContent}
+          onOpen={() => setView('editor')}
+        />
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Currículo</h1>
-        <div className="flex items-center gap-2">
-          <div className="h-2 w-32 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
-            <div
-              className="h-full bg-blue-600"
-              style={{ width: `${resume.completionPercentage}%` }}
-            />
-          </div>
-          <span className="text-sm text-slate-600 dark:text-slate-400">
-            {resume.completionPercentage}% completo
-          </span>
-        </div>
-      </div>
-
-      <Card title="Resumo">
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-          <Input
-            label="Título do currículo"
-            value={form.title}
-            onChange={(e) => set('title', e.target.value)}
-          />
-          <Textarea
-            label="Resumo profissional"
-            value={form.summary}
-            onChange={(e) => set('summary', e.target.value)}
-          />
-
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Input
-              label="Nível de carreira"
-              value={form.careerLevel}
-              onChange={(e) => set('careerLevel', e.target.value)}
-            />
-            <Input
-              label="Anos de experiência"
-              type="number"
-              value={form.yearsExperience}
-              onChange={(e) => set('yearsExperience', e.target.value)}
-            />
-          </div>
-
-          <Input
-            label="Cargo pretendido"
-            value={form.desiredPosition}
-            onChange={(e) => set('desiredPosition', e.target.value)}
-          />
-
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Input
-              label="Salário pretendido"
-              type="number"
-              value={form.desiredSalary}
-              onChange={(e) => set('desiredSalary', e.target.value)}
-            />
-            <Input
-              label="Moeda"
-              value={form.currency}
-              onChange={(e) => set('currency', e.target.value)}
-            />
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Input
-              label="Visibilidade"
-              value={form.visibility}
-              onChange={(e) => set('visibility', e.target.value)}
-            />
-            <Input
-              label="Estado"
-              value={form.status}
-              onChange={(e) => set('status', e.target.value)}
-            />
-          </div>
-
-          {error ? (
-            <p role="alert" className="text-sm text-red-600 dark:text-red-400">
-              {error}
-            </p>
-          ) : null}
-          {success ? (
-            <p className="text-sm text-green-700 dark:text-green-400">Currículo guardado.</p>
-          ) : null}
-
-          <Button type="submit" disabled={submitting}>
-            {submitting ? 'A guardar…' : 'Guardar resumo'}
+    <div className="space-y-6">
+      <PageHeader
+        title={resume.title || 'Currículo Principal'}
+        description="Edite qualquer secção — o modelo de apresentação escolhido preenche-se automaticamente."
+        actions={
+          <Button variant="outline" onClick={() => setView('overview')}>
+            <ArrowLeft className="h-4 w-4" />
+            Voltar à pré-visualização
           </Button>
-        </form>
-      </Card>
+        }
+      />
 
-      {SECTION_ORDER.map((type) => (
-        <SectionManager key={type} config={SECTION_CONFIGS[type]} onCompletionChange={loadResume} />
-      ))}
+      <Tabs defaultValue="summary" className="space-y-4">
+        <TabsList className="h-auto flex-wrap">
+          <TabsTrigger value="summary">Resumo</TabsTrigger>
+          {PRIMARY_TABS.map((type) => (
+            <TabsTrigger key={type} value={type}>
+              {SECTION_CONFIGS[type].label}
+            </TabsTrigger>
+          ))}
+          <TabsTrigger value="more">Mais secções</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="summary">
+          <Card>
+            <CardContent className="pt-6">
+              <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="title">Título do currículo</Label>
+                  <Input id="title" {...register('title')} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="summary">Resumo profissional</Label>
+                  <Textarea id="summary" rows={4} {...register('summary')} />
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="careerLevel">Nível de carreira</Label>
+                    <Input id="careerLevel" {...register('careerLevel')} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="yearsExperience">Anos de experiência</Label>
+                    <Input id="yearsExperience" type="number" {...register('yearsExperience')} />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="desiredPosition">Cargo pretendido</Label>
+                  <Input id="desiredPosition" {...register('desiredPosition')} />
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="desiredSalary">Salário pretendido</Label>
+                    <Input id="desiredSalary" type="number" {...register('desiredSalary')} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="currency">Moeda</Label>
+                    <Input id="currency" {...register('currency')} />
+                  </div>
+                </div>
+                <div className="flex justify-end">
+                  <Button type="submit" loading={isSubmitting} disabled={!isDirty}>
+                    Guardar resumo
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {PRIMARY_TABS.map((type) => (
+          <TabsContent key={type} value={type}>
+            <SectionManager config={SECTION_CONFIGS[type]} />
+          </TabsContent>
+        ))}
+
+        <TabsContent value="more" className="space-y-6">
+          {MORE_TABS.map((type) => (
+            <SectionManager key={type} config={SECTION_CONFIGS[type]} />
+          ))}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

@@ -14,5 +14,10 @@ import { AtsReportRepository } from './ats-report.repository';
   imports: [AuthModule, ResumeVariantModule, JobTargetModule],
   controllers: [AtsController],
   providers: [AtsReportRepository, AtsAnalysisService],
+  // Exported for ResumeOptimizationModule (Phase 7), which reuses
+  // AtsAnalysisService.run() as-is for both the "before" baseline and the
+  // automatic post-apply re-run, and AtsReportRepository to look up the most
+  // recent existing report for a variant (the `force` input flag).
+  exports: [AtsAnalysisService, AtsReportRepository],
 })
 export class AtsModule {}

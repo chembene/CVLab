@@ -1,0 +1,13 @@
+{
+  "extends": "@cvlab/config/typescript/base.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "jsx": "react-jsx",
+    "lib": ["dom", "dom.iterable", "ES2022"],
+    "declaration": true,
+    "outDir": "./dist",
+    "rootDir": "./src"
+  },
+  "include": ["src"]
+}

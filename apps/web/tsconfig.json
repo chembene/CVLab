@@ -7,6 +7,8 @@
       "@cvlab/types/*": ["../../packages/types/src/*"],
       "@cvlab/ui": ["../../packages/ui/src/index.ts"],
       "@cvlab/ui/*": ["../../packages/ui/src/*"],
+      "@cvlab/resume-renderer": ["../../packages/resume-renderer/src/index.ts"],
+      "@cvlab/resume-renderer/*": ["../../packages/resume-renderer/src/*"],
       "@/*": ["./*"]
     }
   },
