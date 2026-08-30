@@ -9,6 +9,7 @@ import type {
   StreamChunk,
 } from '../interfaces/ai-provider.interface';
 import { extractArrayCount } from '../prompt/array-count-instruction.util';
+import { extractEntityIds } from '../prompt/entity-id-extraction.util';
 
 const QUESTION_CATEGORIES = [
   'BEHAVIORAL',
@@ -104,10 +105,12 @@ export class DummyAIProvider implements AIProvider {
    * `evaluations` — Phase 9's two array fields are sized dynamically via
    * `extractArrayCount()`, Career Advisor's `currentAssessment`/`strengths`/
    * `gaps`/`recommendations`/`nextSteps` — FASE 18, LinkedIn's `headline`/
-   * `about`/`skills`/`experienceSuggestions` — FASE 19, reusing
-   * `recommendations` as-is, ATS AI's `overallAssessment`/`priorityIssues`/
-   * `contentRecommendations`/`sectionRecommendations`/`actionPlan` — FASE 20,
-   * reusing `strengths` as-is, everything else stays
+   * `about`/`skills`/`experienceSuggestions` — FASE 19, ATS AI's
+   * `overallAssessment`/`priorityIssues`/`contentRecommendations`/
+   * `sectionRecommendations`/`actionPlan` — FASE 20, Template
+   * Recommendation's `templateRecommendations` — FASE 21, sourced from real
+   * ids found in the prompt itself via `extractEntityIds()` rather than
+   * fabricated, reusing `summary` as-is, everything else stays
    * fixed-shape), so DummyAIProvider never needs to learn which feature is
    * asking — each feature's own response parser reads only the fields it
    * cares about and ignores the rest.
@@ -179,6 +182,25 @@ export class DummyAIProvider implements AIProvider {
       contentRecommendations: dummyRecommendations,
       sectionRecommendations: dummyRecommendations,
       actionPlan: [`Deterministic dummy action step (hash ${hash.slice(0, 8)}).`],
+      // FASE 21 — Template Recommendation's ParsedTemplateRecommendationResponse
+      // shape. `summary` above is reused as-is. Unlike every other field in
+      // this envelope, `templateId` MUST be a real, already-existing id —
+      // extractEntityIds() pulls the real ids straight out of the prompt's
+      // own embedded template catalog (see
+      // TemplateRecommendationPromptBuilder) — ResumeTemplate.id is a
+      // stable slug, never a random uuid, so this reads the literal
+      // `"id": "..."` JSON pairs rather than assuming any particular id
+      // format — so the dummy response actually passes
+      // TemplateRecommendationService's real-catalog validation instead of
+      // being rejected outright.
+      templateRecommendations: extractEntityIds(prompt, 5).map((templateId, i) => ({
+        templateId,
+        rank: i + 1,
+        score:
+          60 +
+          (parseInt(hash.slice((i * 2) % 60, ((i * 2) % 60) + 2) || hash.slice(0, 2), 16) % 40),
+        reason: `Deterministic dummy reason ${i + 1} (hash ${hash.slice(0, 8)}).`,
+      })),
     };
     return JSON.stringify(payload);
   }

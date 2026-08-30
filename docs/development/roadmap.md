@@ -789,6 +789,74 @@ filtering, error state), full frontend suite **220/222** (same 2 pre-existing, u
 `IntersectionObserver` failures), typecheck/lint clean across both apps, `nest build`/`next build` clean. Full
 design in [ats-ai-engine.md](../architecture/ats-ai-engine.md).
 
+## Phase Template Recommendation Engine (as implemented)
+
+Audited read-only before implementation ("AUDITORIA — FASE 21: Template Recommendation Engine"), then built
+directly against the price already given in the brief — no approval round needed this time, unlike ATS AI's
+mid-phase correction. The audit's finding: `AIFeature.TEMPLATE_RECOMMENDATION` existed only as a reserved enum
+key with **zero usage anywhere in the codebase** — the last remaining reserved key with a real, briefed use
+case. Only `INTERVIEW` and `CV_IMPORT` remain deliberately dormant after this phase.
+
+**Pricing**: 20 credits, given directly in the brief.
+
+**The one absolute rule this phase could not violate**: never duplicate the Template Engine (Phase 11) — the
+recommendation reads the existing `ResumeTemplate` catalog read-only and never writes template metadata or
+applies a template to anything itself; "applying" a recommended template remains exclusively the existing
+Phase 11 template-selection flow's job. A new `TemplateRecommendation` table was created (same rationale as
+`CareerAdvice`/`LinkedInProfile`/`AtsAiAnalysis` — `AiRequest` stores no content, and the required `GET`
+endpoints need somewhere real to read from), with `resumeVariantId`/`jobTargetId` as real, **nullable** FKs
+(genuine relational data the row is about, unlike the loose `aiRequestId` pointer — nullable because, unlike
+`AtsAiAnalysis`'s mandatory FK, a recommendation is explicitly allowed to run with neither input) and
+`recommendations` stored as `Json` (nothing in it is ever individually mutated, matching ATS AI's precedent
+rather than `OptimizationSuggestion`'s). Migration `20260830153800_template_recommendation_engine`, purely
+additive.
+
+**A genuine architectural addition, not just another feature**: the AI must only recommend templates by an id
+taken verbatim from the real catalog embedded in its own prompt. The `responseValidator` closure cross-checks
+every returned `templateId` against the real, already-fetched catalog and throws — triggering the same
+automatic refund every other pipeline failure uses — the moment every returned id is fake, so an unusable
+recommendation is never persisted and never silently charged. Making `DummyAIProvider`'s deterministic response
+return _real_ ids (so the happy path is actually exercised, not just the refund path) required a new, genuinely
+feature-agnostic prompt utility, `extractEntityIds()`, mirroring `extractArrayCount()`'s existing philosophy.
+**A bug caught and fixed mid-phase**: the first version assumed UUID-shaped ids and failed every e2e happy-path
+test, because `ResumeTemplate.id` values are stable, human-readable slugs (`'modern'`, `'ats-classic'`, etc.) by
+deliberate design — confirmed directly in the seed file's own doc comment, not guessed. Rewritten to match any
+literal `"id": "value"` JSON pair regardless of format — a strictly more correct, more genuinely generic
+implementation, re-verified end to end (5 e2e failures → 11/11 passing).
+
+Context is the closest yet to Career Advisor's/LinkedIn's shape — Master Resume (optional, gates whether
+sections are fetched), an optional Resume Variant, an optional Job Target (explicit id takes precedence over
+one derived from the Variant) — plus one addition none of the prior features needed: the full active template
+catalog, always present, embedded as JSON directly into the prompt.
+
+Frontend: **a new page**, `/dashboard/template-recommendations` — unlike ATS AI (integrated into an existing
+page), this feature has no single natural host page, so it's linked from the sidebar/mobile nav
+("Recomendação de Templates," in the "Candidaturas" group). Recommended templates render via the existing
+`useResumeTemplate(id)` hook and `TemplateSwatch` component — full template metadata is fetched, never
+duplicated from the recommendation response itself, which carries only `templateId`/`rank`/`score`/`reason`.
+"Ver este template" links into the existing Resume Variant → template-selection flow; this page recommends,
+it never applies.
+
+Quality gate: backend unit **1132/1132** (47 new — prompt builder, response parser, repository, service,
+controller, plus the new `extractEntityIds()` utility), backend e2e `template-recommendation.e2e-spec.ts`
+**11/11** (happy path with real catalog ids, a dedicated `FakeTemplateIdProvider` test double proving the
+fabricated-id → 422 → full refund → zero persisted rows path, invalid/cross-user `resumeVariantId`/
+`jobTargetId` → 404 before any charge, insufficient credits, AiRequest tracking, idempotency, ownership, admin
+bypass). A full 22-suite e2e run (`test:e2e`, 305 tests) showed 3 suites fail — `interview`, `cover-letter`,
+`cv-import` — all 3 confirmed, by re-running them standalone immediately after, to be the same category of
+pre-existing cross-suite flakiness already disclosed in the Payments & Credits/FASE 18/19/20 phases (a
+leftover `feature_pricing` row from an earlier crashed suite, and a timeout unrelated to any file this phase
+touched); all 3 passed cleanly (66/66) standalone, and `template-recommendation.e2e-spec.ts`/`ats-ai.e2e-spec.ts`/
+`linkedin.e2e-spec.ts`/`career-advisor.e2e-spec.ts` themselves passed in every run, including inside the full
+suite. Frontend **8/8 new** (loading state, credit cost, empty state, insufficient balance, history rendering,
+full generate-and-render flow, error state) plus **1/1** nav-entry test, full frontend suite **228/230** (same
+2 pre-existing, unrelated `IntersectionObserver` failures on the marketing page, confirmed unrelated by
+inspecting the stack trace directly). Typecheck/lint clean across both apps (lint warnings are 100%
+pre-existing `no-explicit-any` warnings in unrelated spec files, zero errors), `nest build`/`next build` clean
+— the new route appears in the build's own page table:
+`/dashboard/template-recommendations  8.42 kB  167 kB`. Full design in
+[template-recommendation-engine.md](../architecture/template-recommendation-engine.md).
+
 ## Phase 0 Readiness
 
 As of this pass, the open architectural questions that would have blocked confident Phase 0 scaffolding are resolved: `prompts/` path structure, CV data model, test retake policy, AI request tracking, credit-failure/refund rule, soft-delete scope, admin MFA extensibility, token storage, PII classification/retention, payment provider abstraction, credit/payment separation, domain events, full database entity list, and credit package/feature pricing configuration. See the architecture assessment for the full resolution list. Phase 0 (repo scaffolding, TypeScript/lint/format config, Prisma+PostgreSQL wiring, Docker, test runner config) can now begin without further product decisions blocking it.

@@ -293,6 +293,7 @@ model User {
   careerAdvices                CareerAdvice[]
   linkedInProfiles             LinkedInProfile[]
   atsAiAnalyses                AtsAiAnalysis[]
+  templateRecommendations      TemplateRecommendation[]
   cvImports                    CvImport[]
   applicationPipelineSessions  ApplicationPipelineSession[]
   exportedDocuments            ExportedDocument[]
@@ -693,6 +694,7 @@ model JobTarget {
   interviewSessions           InterviewSession[]
   applicationPipelineSessions ApplicationPipelineSession[]
   resumeVariantVersions       ResumeVariantVersion[]
+  templateRecommendations     TemplateRecommendation[]
 
   @@index([userId])
   @@map("job_targets")
@@ -886,6 +888,7 @@ model ResumeVariant {
   versions                    ResumeVariantVersion[]
   applicationPipelineSessions ApplicationPipelineSession[]
   exportedDocuments           ExportedDocument[]
+  templateRecommendations     TemplateRecommendation[]
 
   @@index([userId])
   @@index([masterResumeId])
@@ -1640,6 +1643,62 @@ model AtsAiAnalysis {
   @@index([atsReportId])
   @@index([userId, createdAt])
   @@map("ats_ai_analyses")
+}
+
+// ---------------------------------------------------------------------------
+// Template Recommendation Engine (docs/architecture/template-recommendation-engine.md, FASE 21)
+//
+// Recommends EXISTING ResumeTemplate rows — the AI is never authoritative
+// over which templates exist; every templateId in `recommendations` is
+// cross-checked against ResumeTemplateRepository before this row is ever
+// created (see TemplateRecommendationService.validateTemplateIds()). Never
+// renders, never mutates the Template Engine's own catalog/favorites — see
+// template-recommendation-engine.md §0/§2.
+// ---------------------------------------------------------------------------
+
+model TemplateRecommendation {
+  id     String @id @default(uuid())
+  userId String @map("user_id")
+  // Both optional inputs — real FKs (not loose pointers, same rationale as
+  // AtsAiAnalysis.atsReportId) since they're genuine relational data when
+  // present, but nullable because a recommendation can run from Master
+  // Resume context alone (see §3 "graceful degradation").
+  resumeVariantId String? @map("resume_variant_id")
+  jobTargetId     String? @map("job_target_id")
+
+  summary String
+  // ValidatedTemplateRecommendationItem[] — { templateId, rank, score,
+  // reason } only. Deliberately NOT the template's name/category/full
+  // metadata (that already belongs to ResumeTemplate and is read fresh via
+  // ResumeTemplateRepository/the frontend's own useResumeTemplate() hook —
+  // duplicating it here would risk it going stale). Stored as Json, not a
+  // separate related table — same reasoning as AtsAiAnalysis.priorityIssues:
+  // no individual recommendation item is ever queried or mutated on its own.
+  recommendations Json
+
+  // Lightweight record of which optional data sources fed this
+  // recommendation (booleans/counts only) — never the underlying resume/job
+  // target content itself. Same rationale as every prior FASE's
+  // contextSnapshot.
+  contextSnapshot Json? @map("context_snapshot")
+  // Snapshot of what CreditService.spendAndExecute() actually charged for
+  // this row — never recomputed from feature_pricing after the fact.
+  creditsUsed     Int   @default(0) @map("credits_used")
+  // Loose pointer to the matching AiRequest row, never a FK — AiRequest
+  // itself never stores the actual generated text, only technical/billing
+  // metadata, so this table is the sole place the generated content lives.
+  aiRequestId     String? @map("ai_request_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user          User           @relation(fields: [userId], references: [id])
+  resumeVariant ResumeVariant? @relation(fields: [resumeVariantId], references: [id])
+  jobTarget     JobTarget?     @relation(fields: [jobTargetId], references: [id])
+
+  @@index([userId])
+  @@index([resumeVariantId])
+  @@index([userId, createdAt])
+  @@map("template_recommendations")
 }
 
 // ---------------------------------------------------------------------------
