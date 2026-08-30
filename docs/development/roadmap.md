@@ -734,6 +734,61 @@ successful generation with/without target role, error state, navigation entry), 
 apps, `nest build`/`next build` clean. Full design in
 [linkedin-engine.md](../architecture/linkedin-engine.md).
 
+## Phase ATS AI Engine (as implemented)
+
+Audited read-only before implementation ("AUDITORIA — FASE 20: ATS AI Engine"), then approved on a single
+pricing decision and built exactly to that approval. The audit's finding: `AIFeature.ATS_AI` existed only as a
+reserved enum key with **zero usage anywhere in the codebase** — its own doc comment had anticipated exactly
+this feature since Phase 6 ("the future AI-assisted ATS suggestion feature... not a replacement for the
+rule-based one"), but no price was ever attached and nothing was registered.
+
+**Pricing decision**: 30 credits — a real business decision made in this phase, matching Career Advisor/LinkedIn
+exactly (an initial 20-credit proposal, priced below those two to reflect that ATS AI consumes an
+already-computed `AtsReport` rather than building context from scratch, was superseded by this explicit final
+decision — the user's own reasoning: ATS AI is "uma camada adicional de interpretação/recomendação inteligente"
+of the same category as those two). Persistence, `DummyAIProvider` extension, and the "never recompute" boundary
+followed directly from precedent without needing separate approval.
+
+**The one absolute rule this phase could not violate**: never duplicate the deterministic ATS engine (Phase 4).
+Confirmed structurally — `AtsAiService` calls `AtsAnalysisService.getOne()` (an ownership-checked read of an
+_existing_ report) and never touches `ats-scoring.util.ts`'s keyword-matching/scoring functions at all. A
+dedicated e2e assertion reads the underlying `AtsReport` row before and after an AI analysis and confirms it is
+byte-for-byte unchanged. A new `AtsAiAnalysis` table was created (same rationale as `CareerAdvice`/
+`LinkedInProfile` — `AiRequest` stores no content, and the required `GET` endpoints need somewhere real to read
+from), with two deliberate departures from that precedent: `atsReportId` is a real FK (not a loose pointer,
+since the report being interpreted is genuine relational data, not an audit-log cross-reference), and the 3
+recommendation arrays are stored as `Json` rather than a separate related table (nothing in them is ever
+individually mutated, unlike `OptimizationSuggestion` — a separate table would be unused complexity). Migration
+`20260830131600_ats_ai_engine`, purely additive.
+
+Context is narrower still than LinkedIn's — and, uniquely among every AI feature built so far, **nothing in it
+is optional**: `AtsReport.resumeVariantId`/`jobTargetId` are non-nullable, so a report's Resume Variant and Job
+Target are structurally guaranteed to exist. The brief's own suggested output shape (`missingKeywords`/
+`skillGaps` as flat arrays) was deliberately narrowed — echoing the deterministic report's own lists back as a
+second AI-generated copy would duplicate data already rendered on the same page; the interpretation references
+those keywords/skills by name within its prose instead.
+
+Frontend: **no new page** — per the brief's explicit "não criar uma segunda experiência ATS," ATS AI was
+integrated directly into the existing `/dashboard/ats-reports/[id]` detail page as a new "Interpretação com IA"
+card, reusing `PriorityBadge`/`ScoreBadge`/`Alert`/`EmptyState`/`ErrorState` as-is — no new visual components.
+`lib/api/ats-ai.ts` follows the same shape as `career-advisor.ts`/`linkedin.ts`.
+
+Quality gate: backend unit **1085/1085** (41 new — prompt builder, response parser, repository, service,
+controller), backend e2e `ats-ai.e2e-spec.ts` **10/10** (happy path proving the deterministic report is
+untouched, invalid/cross-user `atsReportId` → 404 before any charge, insufficient credits, AiRequest tracking,
+invalid-JSON refund, idempotency integration, ownership, admin bypass) — every test that needs an `AtsReport`
+builds one for real through the existing, unchanged `POST /ats/run` endpoint, never seeding one directly,
+confirmed with zero regression against `ai-orchestration`/`cover-letter`/`interview`/`resume-optimization`/
+`career-advisor`/`linkedin`/`ats-engine` (101/101) run together. A full 21-suite e2e run showed the same
+pre-existing, already-documented cross-suite flakiness first disclosed in the Payments & Credits phase and
+reconfirmed in FASE 18/19 — 2 unrelated suites (`application-pipeline`, `cv-import`) failed in that run and
+both passed cleanly (20/20) when re-run standalone immediately after; `ats-ai.e2e-spec.ts` itself passed in
+every single run, including inside the full suite. Frontend **7/7 new** (deterministic report rendering, AI
+button + dynamic price, insufficient balance, empty state, generation + result rendering, per-report
+filtering, error state), full frontend suite **220/222** (same 2 pre-existing, unrelated
+`IntersectionObserver` failures), typecheck/lint clean across both apps, `nest build`/`next build` clean. Full
+design in [ats-ai-engine.md](../architecture/ats-ai-engine.md).
+
 ## Phase 0 Readiness
 
 As of this pass, the open architectural questions that would have blocked confident Phase 0 scaffolding are resolved: `prompts/` path structure, CV data model, test retake policy, AI request tracking, credit-failure/refund rule, soft-delete scope, admin MFA extensibility, token storage, PII classification/retention, payment provider abstraction, credit/payment separation, domain events, full database entity list, and credit package/feature pricing configuration. See the architecture assessment for the full resolution list. Phase 0 (repo scaffolding, TypeScript/lint/format config, Prisma+PostgreSQL wiring, Docker, test runner config) can now begin without further product decisions blocking it.

@@ -32,6 +32,7 @@ import { ApplicationPipelineModule } from './application-pipeline/application-pi
 import { PaymentsModule } from './payments/payments.module';
 import { CareerAdvisorModule } from './career-advisor/career-advisor.module';
 import { LinkedInModule } from './linkedin/linkedin.module';
+import { AtsAiModule } from './ats-ai/ats-ai.module';
 
 @Module({
   imports: [
@@ -74,6 +75,7 @@ import { LinkedInModule } from './linkedin/linkedin.module';
     PaymentsModule,
     CareerAdvisorModule,
     LinkedInModule,
+    AtsAiModule,
   ],
   providers: [
     {

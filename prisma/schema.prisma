@@ -292,6 +292,7 @@ model User {
   interviewSessions            InterviewSession[]
   careerAdvices                CareerAdvice[]
   linkedInProfiles             LinkedInProfile[]
+  atsAiAnalyses                AtsAiAnalysis[]
   cvImports                    CvImport[]
   applicationPipelineSessions  ApplicationPipelineSession[]
   exportedDocuments            ExportedDocument[]
@@ -1074,6 +1075,7 @@ model AtsReport {
   resumeVariant       ResumeVariant        @relation(fields: [resumeVariantId], references: [id])
   jobTarget           JobTarget            @relation(fields: [jobTargetId], references: [id])
   resumeOptimizations ResumeOptimization[]
+  atsAiAnalyses       AtsAiAnalysis[]
 
   @@index([userId])
   @@index([resumeVariantId])
@@ -1581,6 +1583,63 @@ model LinkedInProfile {
   @@index([userId])
   @@index([userId, createdAt])
   @@map("linkedin_profiles")
+}
+
+// ---------------------------------------------------------------------------
+// ATS AI Engine (docs/architecture/ats-ai-engine.md, FASE 20)
+//
+// Interprets an existing, deterministic AtsReport (Phase 4) — never
+// recomputes scores/keyword-matching/skill-matching itself. One row per
+// interpretation, referencing the AtsReport it explains via a real FK
+// (unlike CareerAdvice/LinkedInProfile's loose aiRequestId-only pointer
+// style — here the report being interpreted is genuine relational data, not
+// an audit-log cross-reference, and the FK enables "compare analyses over
+// time for the same report" reads without a join workaround).
+// ---------------------------------------------------------------------------
+
+model AtsAiAnalysis {
+  id          String @id @default(uuid())
+  userId      String @map("user_id")
+  atsReportId String @map("ats_report_id")
+
+  // The AI's structured interpretation. `priorityIssues`/`contentRecommendations`/
+  // `sectionRecommendations` are arrays of { priority, category, explanation,
+  // recommendation } objects — stored as Json (not a separate related table,
+  // unlike OptimizationSuggestion): every item here is immutable, read-only
+  // context tied 1:1 to this one analysis, never individually queried or
+  // mutated (no per-item accept/apply flow exists in this phase — see
+  // ats-ai-engine.md §"Relation to Resume Optimization"), so a separate table
+  // + repository would be unused complexity, not real normalization.
+  overallAssessment      String   @map("overall_assessment")
+  strengths              String[]
+  priorityIssues         Json     @map("priority_issues")
+  contentRecommendations Json     @map("content_recommendations")
+  sectionRecommendations Json     @map("section_recommendations")
+  actionPlan             String[] @map("action_plan")
+
+  // Lightweight record of which optional data sources fed this analysis
+  // (booleans/counts only, e.g. {"hasJobTarget":true}) — never the
+  // underlying report/resume/job-target content itself, which already
+  // lives in its own tables and can be re-read anytime. Same rationale as
+  // CareerAdvice.contextSnapshot/LinkedInProfile.contextSnapshot.
+  contextSnapshot Json? @map("context_snapshot")
+  // Snapshot of what CreditService.spendAndExecute() actually charged for
+  // this row — never recomputed from feature_pricing after the fact.
+  creditsUsed     Int   @default(0) @map("credits_used")
+  // Loose pointer to the matching AiRequest row, never a FK — AiRequest
+  // itself never stores the actual generated text, only technical/billing
+  // metadata, so this table is the sole place the generated content lives.
+  aiRequestId     String? @map("ai_request_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user      User      @relation(fields: [userId], references: [id])
+  atsReport AtsReport @relation(fields: [atsReportId], references: [id])
+
+  @@index([userId])
+  @@index([atsReportId])
+  @@index([userId, createdAt])
+  @@map("ats_ai_analyses")
 }
 
 // ---------------------------------------------------------------------------

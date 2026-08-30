@@ -105,7 +105,9 @@ export class DummyAIProvider implements AIProvider {
    * `extractArrayCount()`, Career Advisor's `currentAssessment`/`strengths`/
    * `gaps`/`recommendations`/`nextSteps` — FASE 18, LinkedIn's `headline`/
    * `about`/`skills`/`experienceSuggestions` — FASE 19, reusing
-   * `recommendations` as-is, everything else stays
+   * `recommendations` as-is, ATS AI's `overallAssessment`/`priorityIssues`/
+   * `contentRecommendations`/`sectionRecommendations`/`actionPlan` — FASE 20,
+   * reusing `strengths` as-is, everything else stays
    * fixed-shape), so DummyAIProvider never needs to learn which feature is
    * asking — each feature's own response parser reads only the fields it
    * cares about and ignores the rest.
@@ -129,6 +131,14 @@ export class DummyAIProvider implements AIProvider {
         improvements: [`Deterministic improvement ${i + 1}`],
       };
     });
+    // FASE 20 — ATS AI's AtsAiRecommendation[] shape, reused across
+    // priorityIssues/contentRecommendations/sectionRecommendations.
+    const dummyRecommendations = Array.from({ length: n }, (_, i) => ({
+      priority: ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'][i % 4],
+      category: `Deterministic dummy category ${i + 1}`,
+      explanation: `Deterministic dummy explanation ${i + 1} (hash ${hash.slice(0, 8)}).`,
+      recommendation: `Deterministic dummy recommendation ${i + 1} (hash ${hash.slice(0, 8)}).`,
+    }));
     const payload = {
       title: `Application for this role (dummy, hash ${hash.slice(0, 12)})`,
       coverLetter: `Dear Hiring Manager,\n\nThis is a deterministic placeholder cover letter (hash ${hash.slice(0, 12)}) generated for testing. No external AI provider was called.\n\nSincerely,\nThe Candidate`,
@@ -162,6 +172,13 @@ export class DummyAIProvider implements AIProvider {
       experienceSuggestions: [
         `Deterministic dummy experience suggestion (hash ${hash.slice(0, 8)}).`,
       ],
+      // FASE 20 — ATS AI's ParsedAtsAiResponse shape. `strengths` above is
+      // reused as-is (already a string[], same field name/shape).
+      overallAssessment: `Deterministic dummy overall assessment (hash ${hash.slice(0, 12)}).`,
+      priorityIssues: dummyRecommendations,
+      contentRecommendations: dummyRecommendations,
+      sectionRecommendations: dummyRecommendations,
+      actionPlan: [`Deterministic dummy action step (hash ${hash.slice(0, 8)}).`],
     };
     return JSON.stringify(payload);
   }
