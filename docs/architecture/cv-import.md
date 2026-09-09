@@ -47,15 +47,19 @@ CvImport row, status CONFIRMED
 ```
 cv-parser.ts                    Text extraction (extractText) + deterministic parse (parse) — no I/O, no AI
 cv-import-merge-analyzer.ts     Phase 12 — pure, deterministic duplicate/new classification (§13)
+cv-import-ai-validator.ts       FASE 22 — buildEligibleFields()/getFieldValue()/validateCvImportAiSuggestions() (see cv-import-ai.md)
 cv-import.repository.ts         Only Prisma access for cv_imports
-cv-import.service.ts            upload / list / getOne / previewMerge / confirm / discard / remove
+cv-import.service.ts            upload / list / getOne / previewMerge / confirm / discard / remove / enhanceWithAi (FASE 22)
 cv-import.controller.ts         /api/v1/cv-import/*
-cv-import.module.ts             Imports ProfileModule, MasterResumeModule, ResumeSectionsModule
+cv-import.module.ts             Imports ProfileModule, MasterResumeModule, ResumeSectionsModule, AiOrchestrationModule (FASE 22)
 dto/confirm-cv-import.dto.ts    + Phase 12: awards/volunteerExperiences/references, strategy
 interfaces/extracted-cv-data.interface.ts   Shared shape: parser output = confirm() input
+interfaces/cv-import-ai.interface.ts        FASE 22 — CvImportAiSuggestion/CvImportAiResult/CvImportAiEligibleField
+prompt/cv-import-prompt-builder.ts          FASE 22 — registered into PromptRegistry for AIFeature.CV_IMPORT
+prompt/cv-import-response.parser.ts         FASE 22 — shape validation for the AI's fieldSuggestions/unresolvedFields
 ```
 
-Composes `ProfileService`, `MasterResumeService`, and `ResumeSectionsService` through their exported, existing interfaces — the same "feature module never bypasses another domain's service layer" convention every module in this codebase follows (see [module-boundaries.md](module-boundaries.md)).
+Composes `ProfileService`, `MasterResumeService`, and `ResumeSectionsService` through their exported, existing interfaces — the same "feature module never bypasses another domain's service layer" convention every module in this codebase follows (see [module-boundaries.md](module-boundaries.md)). Since FASE 22, also composes `AiOrchestrationService` (via `AiOrchestrationModule`) for the optional `enhanceWithAi()` step — see [cv-import-ai.md](cv-import-ai.md).
 
 ## 6. Confidence
 
@@ -148,7 +152,7 @@ Client-side file validation (MIME/extension/size/empty) in `CvUploadDropzone` is
 - ~~No per-array-entry confidence~~ **Resolved by §15** — every entry in all 9 array sections now carries its own `confidence`/`source`/`sourceText`/`warnings` (§15b), not just the 6 `personalData.*` fields. `CvFieldConfidence` (§6) is unchanged and still used for personal info/summary specifically, which stay non-array-shaped.
 - **DB-level duplicate rejection at creation time still covers only skills/certificates/educations** — a pre-existing `ResumeSectionsService` behavior this module doesn't control. Phase 12's merge preview (§13c) covers all 9 importable section types, but it's advisory (shown to the user before commit); it doesn't change which section types the database itself refuses a second near-identical row for.
 - **Confidence scoring is a hand-tuned point system, not calibrated against real-world accuracy data** (§15b) — the point values (e.g. +0.1 for a present company) encode a reasonable, disclosed ordering (more populated fields → higher confidence), not a statistically validated probability. Treated as a review-priority signal, not a guarantee.
-- **No credit cost** — `creditsUsed` is always `0`; this module was never designed to charge, matching "extraction is deterministic, not a paid AI feature." §13f documents the designed-but-unwired AI-normalization path this column already anticipates.
+- **The deterministic extraction step itself has no credit cost** — `creditsUsed` is always `0` for `upload()`, matching "extraction is deterministic, not a paid AI feature." The AI-normalization path §13f anticipated is no longer unwired — see [cv-import-ai.md](cv-import-ai.md) (FASE 22): a separate, optional, 30-credit `POST /cv-import/:id/enhance` step, distinct from extraction itself.
 - **No PDF/DOCX preview thumbnail** — the review screen shows extracted _data_, never a rendering of the original document.
 - **2-column/sidebar PDF layouts can extract out of visual reading order** for layouts that don't cleanly split at the page's horizontal midpoint (§7c) — a narrower-than-half sidebar, for instance.
 - **DOCX 2-column detection (§14b) only recognizes the single-row/2-cell-table layout idiom** — a DOCX using Word's rarer "newspaper columns" print feature (not a table) still extracts in raw paragraph order; this is a materially less common real-world case than the table technique, left unhandled.
@@ -210,13 +214,11 @@ Both paths emit a `merged`/`replaced` event (in addition to the existing `confir
 
 Upload's generic messages replaced with specific, actionable Portuguese: "Nenhum ficheiro foi enviado...", "Formato de ficheiro não suportado...", "O ficheiro excede o limite de 5MB...". The parse-failure catch block now distinguishes `InvalidPromptError` (CVParser's own "no extractable text" signal — most commonly a scanned/image-only PDF with no text layer) with a specific, actionable message pointing at that cause, from any other unexpected extraction failure, instead of one generic fallback string for both.
 
-### 13f. AI normalization/extraction — designed, deliberately not wired live
+### 13f. AI normalization/extraction — designed then, wired live in FASE 22
 
-The brief's §8 (hybrid extraction pipeline) and §9 (AI extraction contract: value/confidence/sourceText, "never invent, infer, improve, rewrite, or complete missing information") describe a real, valuable enhancement — but wiring a live paid AI call requires a product decision (a price point for `AIFeature.CV_IMPORT`) that isn't this implementation's to make unilaterally, per the brief's own §20 and CLAUDE.md's credit-system rules. This phase therefore:
+_(Original Phase 12 text, preserved for history:)_ The brief's §8 (hybrid extraction pipeline) and §9 (AI extraction contract: value/confidence/sourceText, "never invent, infer, improve, rewrite, or complete missing information") describe a real, valuable enhancement — but wiring a live paid AI call requires a product decision (a price point for `AIFeature.CV_IMPORT`) that isn't this implementation's to make unilaterally, per the brief's own §20 and CLAUDE.md's credit-system rules. This phase therefore kept extraction 100% deterministic and documented the contract for a future phase to wire in directly: an AI normalization step, if/when priced, would sit **after** deterministic extraction (not replacing it) — `AiOrchestrationService.execute({ feature: AIFeature.CV_IMPORT, ... })`, following the exact same pattern already proven by `ResumeOptimizationService` — a `CvImportPromptBuilder`/`CvImportResponseParser` pair, credit spend via `CreditService.spendAndExecute()`, and a strict system prompt enforcing per-field output with an explicit "return null for anything not explicitly present" instruction. `CvImport.creditsUsed` already existed in the schema for exactly this, unused (always `0`) until that day.
 
-- Keeps extraction **100% deterministic**, exactly as §3 already established and CLAUDE.md's "AI must never invent qualifications" already mandates as the safe default.
-- Documents the contract here so a future phase can wire it in directly: an AI normalization step, if/when priced, would sit **after** deterministic extraction (not replacing it) — `AiOrchestrationService.execute({ feature: AIFeature.CV_IMPORT, ... })`, following the exact same pattern already proven by `ResumeOptimizationService` (§ resume-optimization.md) — a `CvImportPromptBuilder`/`CvImportResponseParser` pair, credit spend via `CreditService.spendAndExecute()` (validate-before-charge, automatic refund on provider failure), and a strict system prompt enforcing per-field `{ value, confidence, sourceText }` output with an explicit "return null for anything not explicitly present" instruction. `CvImport.creditsUsed` already exists in the schema for exactly this, unused (always `0`) until that day.
-- Recommends this as the top candidate for the next CV Import phase (see the session's final report) rather than rushing a design that touches pricing without the appropriate review.
+**FASE 22 update (2026-08-30):** exactly this contract is now implemented, after an explicit user pricing decision (30 credits) — see **[cv-import-ai.md](cv-import-ai.md)** for the full design. Every prediction above held: the AI step sits strictly after this section's deterministic extraction, never replaces it, reuses `AiOrchestrationService.execute()` unchanged, and `CvImport.creditsUsed` (plus two new sibling columns, `aiSuggestions`/`aiRequestId`) is exactly where the result now lives — no new table was needed. The one refinement versus the original sketch: the wire contract's array is named `fieldSuggestions` (not the originally-sketched flat `{value, confidence, sourceText}` per field) to support a `{section, index, field, originalValue, suggestedValue, reason, confidence}` shape rich enough for the frontend's explicit Aceitar/Rejeitar review UI, and to avoid a naming collision with Resume Optimization's own `suggestions` field in `DummyAIProvider`'s shared envelope.
 
 ### 13g. Original file retention (brief §17) — deferred, not implemented
 

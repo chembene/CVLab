@@ -4,9 +4,12 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import type { CvFileType, CvImport, MasterResume } from '@prisma/client';
 import { InvalidPromptError } from '../ai-orchestration/errors/invalid-prompt.error';
+import { AiOrchestrationService } from '../ai-orchestration/pipeline/ai-orchestration.service';
+import { AIFeature } from '../ai-orchestration/constants/ai-feature.enum';
 import { assertOwnerOrAdmin } from '../common/authorization/assert-owner-or-admin.util';
 import {
   RESUME_ENTITY_CHANGED_EVENT,
@@ -22,6 +25,10 @@ import { CvImportRepository } from './cv-import.repository';
 import type { CvMergeResolution, ExtractedCvData } from './interfaces/extracted-cv-data.interface';
 import type { ConfirmCvImportDto } from './dto/confirm-cv-import.dto';
 import { analyzeMerge, type ExistingSections, type MergePreview } from './cv-import-merge-analyzer';
+import type { CvImportPromptInput } from './prompt/cv-import-prompt-builder';
+import { CvImportResponseParser } from './prompt/cv-import-response.parser';
+import { validateCvImportAiSuggestions } from './cv-import-ai-validator';
+import type { CvImportAiSuggestion } from './interfaces/cv-import-ai.interface';
 
 /** Every section type this import module ever reads/writes — courses/publications aren't part of the canonical import model (brief §5) and stay manual-entry-only. */
 const IMPORTABLE_SECTION_TYPES: SectionType[] = [
@@ -83,6 +90,7 @@ export class CvImportService {
     private readonly masterResumeService: MasterResumeService,
     private readonly sectionsService: ResumeSectionsService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly aiOrchestrationService: AiOrchestrationService,
   ) {}
 
   async upload(
@@ -186,6 +194,91 @@ export class CvImportService {
 
     const existing = await this.loadExistingSections(requestingUser, targetUserId);
     return analyzeMerge(data, existing);
+  }
+
+  /**
+   * FASE 22 — CV Import AI / Intelligent Extraction Engine
+   * (docs/architecture/cv-import-ai.md). A second, independent, OPTIONAL
+   * layer on top of the deterministic extraction above — never replaces it,
+   * never re-parses the original file, and never writes anything itself:
+   * it only proposes revisions to fields `CVParser` already extracted (or
+   * flags ones it can't confidently improve), persisted back onto the SAME
+   * `CvImport` row for the review screen to show. The user still has to
+   * explicitly apply a suggestion (by editing their local draft) and call
+   * the pre-existing `confirm()` above — this method never touches
+   * Profile/MasterResume/sections. Reuses `AiOrchestrationService.execute()`
+   * exclusively — no direct `CreditService`/`AiRequestTrackingService`/
+   * provider call, mirroring every other AI feature in this codebase.
+   */
+  async enhanceWithAi(
+    requestingUser: RequestUser,
+    targetUserId: string,
+    id: string,
+  ): Promise<CvImport> {
+    assertOwnerOrAdmin(requestingUser, targetUserId);
+    const cvImport = await this.findOwnedOrThrow(targetUserId, id);
+    if (cvImport.status !== 'EXTRACTED') {
+      throw new ConflictException(
+        `Cannot run AI enhancement on a CV import with status ${cvImport.status}.`,
+      );
+    }
+
+    const data = (cvImport.extractedData ?? {}) as unknown as ExtractedCvData;
+    const promptInput: CvImportPromptInput = { data };
+
+    const result = await this.aiOrchestrationService.execute({
+      userId: targetUserId,
+      feature: AIFeature.CV_IMPORT,
+      input: promptInput,
+      idempotencyKey: `cv-import-ai:${targetUserId}:${randomUUID()}`,
+      options: {
+        responseFormat: 'json',
+        // Runs inside AiOrchestrationService's own "Validate Response" step
+        // — a thrown InvalidPromptError here (malformed shape, or every
+        // returned suggestion pointing at a field that doesn't really
+        // exist) gets the same automatic refund as any other pipeline
+        // failure, entirely without this service touching CreditService
+        // itself.
+        responseValidator: (generateResult) => {
+          const parsed = CvImportResponseParser.parse(generateResult.text);
+          this.validateOrThrow(data, parsed.suggestions);
+        },
+      },
+    });
+
+    const parsed = CvImportResponseParser.parse(result.text);
+    const suggestions = this.validateOrThrow(data, parsed.suggestions);
+
+    return this.repository.update(id, {
+      aiSuggestions: suggestions,
+      aiUnresolvedFields: parsed.unresolvedFields,
+      aiRequestId: result.aiRequestId,
+      creditsUsed: result.creditsCharged,
+    });
+  }
+
+  /**
+   * Cross-checks every suggestion against the real draft
+   * (`validateCvImportAiSuggestions()` — drops any pointing at a
+   * non-existent/empty field, never trusts the AI's own echoed
+   * `originalValue`). If the AI returned at least one suggestion but every
+   * single one was invalid, that's a strong signal of a genuinely broken/
+   * hallucinating response — worth refunding, the same "drop invalid, throw
+   * only if literally nothing survives" rule Template Recommendation (FASE
+   * 21) established. An honestly-empty response (a clean draft with nothing
+   * to revise) is never an error.
+   */
+  private validateOrThrow(
+    data: ExtractedCvData,
+    suggestions: CvImportAiSuggestion[],
+  ): CvImportAiSuggestion[] {
+    const validated = validateCvImportAiSuggestions(data, suggestions);
+    if (suggestions.length > 0 && validated.length === 0) {
+      throw new InvalidPromptError(
+        'AI response referenced no fields that actually exist in this CV import.',
+      );
+    }
+    return validated;
   }
 
   /**

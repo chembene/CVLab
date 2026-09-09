@@ -2014,6 +2014,22 @@ model CvImport {
   // the AI Extraction step — 0 until that step runs.
   creditsUsed Int @default(0) @map("credits_used")
 
+  // FASE 22 — CV Import AI / Intelligent Extraction Engine
+  // (docs/architecture/cv-import-ai.md). Set only by
+  // CvImportService.enhanceWithAi(), an optional, separate step run after
+  // upload() — never by the deterministic extraction above. CvImportAiSuggestion[]
+  // — each already cross-checked against a real, non-empty extractedData
+  // field before persistence (see cv-import-ai-validator.ts); never a
+  // fabricated value. Reusing this same row (rather than a new table, unlike
+  // every other FASE 18-21 AI feature) because this column pair was
+  // designed and reserved for exactly this since Phase 10.5 — see
+  // creditsUsed's own comment above and cv-import.md §13f.
+  aiSuggestions      Json?    @map("ai_suggestions")
+  aiUnresolvedFields String[] @default([]) @map("ai_unresolved_fields")
+  // Loose pointer to the matching AiRequest row, never a FK — same
+  // convention as every other AI feature's aiRequestId.
+  aiRequestId        String?  @map("ai_request_id")
+
   // Set only once confirm() succeeds — the MasterResume this import created.
   masterResumeId String? @map("master_resume_id")
   errorMessage   String? @map("error_message")

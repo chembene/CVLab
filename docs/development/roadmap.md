@@ -857,6 +857,80 @@ pre-existing `no-explicit-any` warnings in unrelated spec files, zero errors), `
 `/dashboard/template-recommendations  8.42 kB  167 kB`. Full design in
 [template-recommendation-engine.md](../architecture/template-recommendation-engine.md).
 
+## Phase CV Import AI Engine (as implemented)
+
+Audited read-only before implementation ("AUDITORIA — FASE 22: CV Import AI / Intelligent Extraction
+Engine"), then blocked on a pricing decision (per PASSO 6) before implementing anything else — unlike every
+prior AI phase, this one had a genuinely pre-existing, extensively documented design contract waiting for it:
+`cv-import.md` §13f (Phase 12) had already sketched the exact `AiOrchestrationService.execute({ feature:
+AIFeature.CV_IMPORT, ... })` integration, and `CvImport.creditsUsed` had been reserved in the schema since
+Phase 10.5 specifically for this step, still always `0`. The audit also found a per-entry deterministic
+confidence mechanism already built (`CvDraftMeta.confidence`, `lib/cv-import/confidence.ts`'s
+`getEntryConfidenceTier()`, HIGH/MEDIUM/LOW at the exact thresholds PASSO 5 asked for) — reused as-is, no new
+confidence concept introduced.
+
+**Pricing decision**: 30 credits, approved by the user at this phase's mandatory decision checkpoint — no
+price for `AIFeature.CV_IMPORT` had ever been documented or approved anywhere in the codebase; every existing
+mention (cv-import.md, credit-architecture.md) explicitly said pricing was a deliberately deferred product
+decision, confirmed by exhaustive grep before presenting the checkpoint. 30 matches Career Advisor/LinkedIn/
+ATS AI's "interpretation of already-available data" category, not a heavier full-content-generation task like
+Resume Optimization (80) or Cover Letter (40).
+
+**The one absolute rule this phase could not violate**: the AI may only propose a REVISION to a field the
+deterministic `CVParser` already found — never invent a value for an empty field, and never write to Profile/
+Master Resume/sections itself. Confirmed structurally two ways: (1) `CvImportPromptBuilder` embeds an
+`ELIGIBLE_FIELDS_JSON` block listing only already-extracted, non-empty fields, computed by a new
+`buildEligibleFields()`/`getFieldValue()` pair in `cv-import-ai-validator.ts`; (2) after the AI responds, the
+SAME functions cross-check every returned suggestion against the real draft — a suggestion targeting a field
+that doesn't exist or is empty is silently dropped, and the real current value is always substituted as
+`originalValue`, never the AI's own echo of it (throwing, and triggering the standard refund, only if
+literally every suggestion is invalid). `confirm()` itself required **zero backend changes** — it already
+accepted a fully user-edited draft back since Phase 12, so accepting an AI suggestion is indistinguishable from
+the user having typed the revision in by hand.
+
+**A genuine architectural departure from FASE 18-21**: unlike every prior AI feature (each of which created a
+brand-new table), this phase reuses the _existing_ `CvImport` row — three purely additive columns
+(`aiSuggestions Json?`, `aiUnresolvedFields String[] @default([])`, `aiRequestId String?`), migration
+`20260830171627_cv_import_ai_engine`. This was the design `CvImport.creditsUsed`'s own comment had anticipated
+since Phase 10.5, not a new decision. A naming collision was caught and fixed during implementation: the wire
+contract's array had to be renamed `fieldSuggestions` (not `suggestions`) to avoid silently colliding with
+Resume Optimization's own differently-shaped `suggestions` field inside `DummyAIProvider`'s one shared JSON
+envelope — the same precedent Template Recommendation (FASE 21) established for its own field naming.
+`DummyAIProvider` gained a matching `extractCvImportEligibleFields()` capability, mirroring FASE 21's
+`extractEntityIds()` philosophy against a richer per-field shape.
+
+Frontend: **no new page** — per this phase's own "preserve CV Import" rule, integrated directly into the
+existing `/dashboard/import-cv` review screen as a new, self-contained `CvImportAiSuggestions` component
+rendered _alongside_ (never inside) the pre-existing, already-tested 900-line `CvImportReview` component, which
+needed zero changes. Reuses `getEntryConfidenceTier()` for the confidence badge and Resume Optimization's own
+established original-struck-through/suggested-in-green visual convention. Accepting a suggestion calls a small
+pure function, `applyCvImportAiSuggestion()`, folding the revision into the exact same `reviewData` state the
+user's own manual edits already write to.
+
+Quality gate: backend unit **1191/1191** (72 new — prompt builder, response parser, validator, service,
+repository, controller), backend e2e `cv-import-ai.e2e-spec.ts` **14/14** (valid extraction, partial CV,
+suggestions grounded in real fields only, invalid/non-existent id → 404 before any charge, cross-user
+ownership, insufficient credits, already-confirmed-import rejection, AiRequest tracking, invalid-JSON refund,
+provider-failure refund, idempotency, admin bypass, Master Resume untouched before confirmation and correct
+after it). A full 23-suite e2e run initially showed widespread failures traced to a self-inflicted cause — a
+standalone verification run was still executing concurrently against the same database, causing
+`feature_pricing` unique-constraint collisions across multiple unrelated suites; re-run cleanly and in
+isolation, the full suite passed **20/23 suites (288/319 tests)** outright, with exactly 3 failures
+(`cv-import`, `cv-import-ai`, `linkedin`) — all traced to the same pre-existing, already-documented
+cross-suite flakiness disclosed in every prior phase's report this session (a PDF-parsing timing sensitivity
+under sustained `--runInBand` load, and the recurring `feature_pricing` unique-constraint collision), confirmed
+by re-running all 3 standalone immediately after: **36/36 passing**, including `cv-import-ai.e2e-spec.ts`
+itself in every single run. Frontend **17/17 new** (`CvImportAiSuggestions`: availability, live pricing,
+insufficient balance, generate flow, error state, empty state, confidence/original-vs-suggested rendering,
+accept, reject, unresolved-fields notes; `apply-ai-suggestion.ts`: 6 pure-function tests) plus **7 existing
+`import-cv/page.test.tsx` tests updated** for the new credit-estimate fetch call the review screen now issues,
+full frontend suite **243/245** (same 2 pre-existing, unrelated `IntersectionObserver` failures on the
+marketing page). Typecheck/lint clean across both apps (one real lint error caught and fixed during this phase
+— an async generator with no reachable `yield` in a test double — everything else pre-existing
+`no-explicit-any` warnings), `nest build`/`next build` clean — `/dashboard/import-cv` grows from ~14 kB to
+15.6 kB in the build's own page table, confirming the new panel is bundled. Full design in
+[cv-import-ai.md](../architecture/cv-import-ai.md).
+
 ## Phase 0 Readiness
 
 As of this pass, the open architectural questions that would have blocked confident Phase 0 scaffolding are resolved: `prompts/` path structure, CV data model, test retake policy, AI request tracking, credit-failure/refund rule, soft-delete scope, admin MFA extensibility, token storage, PII classification/retention, payment provider abstraction, credit/payment separation, domain events, full database entity list, and credit package/feature pricing configuration. See the architecture assessment for the full resolution list. Phase 0 (repo scaffolding, TypeScript/lint/format config, Prisma+PostgreSQL wiring, Docker, test runner config) can now begin without further product decisions blocking it.

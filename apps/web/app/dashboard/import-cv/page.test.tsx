@@ -76,6 +76,28 @@ const MERGE_PREVIEW_EMPTY = {
 };
 
 /**
+ * FASE 22 — CvImportAiSuggestions mounts as soon as the review screen
+ * renders and immediately fires its own useCreditEstimate() query — one
+ * extra fetch call, queued right after whatever response lands the flow on
+ * 'review', in every test that actually reaches that screen (never in a
+ * test that stays on the existing-resume-choice screen, or confirms
+ * "replace"/"cancel" straight from it — CvImportAiSuggestions never mounts
+ * there).
+ */
+const CREDIT_ESTIMATE = {
+  body: {
+    success: true,
+    data: {
+      featureKey: 'cv_import',
+      cost: 30,
+      currentBalance: 100,
+      sufficientBalance: true,
+      balanceAfter: 70,
+    },
+  },
+};
+
+/**
  * Flushes the microtask queue (act-wrapped, so react-query's resulting
  * state update doesn't warn) so the mount-time useMasterResume() query has
  * actually applied its resolved value before a test synchronously reads
@@ -108,7 +130,11 @@ describe('ImportCvPage', () => {
   });
 
   it('shows a processing state, then the review screen once upload succeeds (no existing Master Resume)', async () => {
-    mockFetchSequence([NO_MASTER_RESUME, { body: { success: true, data: uploadedCvImport } }]);
+    mockFetchSequence([
+      NO_MASTER_RESUME,
+      { body: { success: true, data: uploadedCvImport } },
+      CREDIT_ESTIMATE,
+    ]);
     renderWithQueryClient(<ImportCvPage />);
 
     // Let the mount-time useMasterResume() query actually settle (not just
@@ -160,6 +186,7 @@ describe('ImportCvPage', () => {
     const fetchMock = mockFetchSequence([
       NO_MASTER_RESUME,
       { body: { success: true, data: uploadedCvImport } },
+      CREDIT_ESTIMATE,
       {
         body: {
           success: true,
@@ -187,8 +214,8 @@ describe('ImportCvPage', () => {
     await waitFor(() => expect(screen.getByText('Importação concluída')).toBeInTheDocument());
     expect(toast.success).toHaveBeenCalledWith('CV importado com sucesso.');
 
-    // The edited value, not the original, was sent to confirm() — call #3 (after the master-resume check and upload).
-    const confirmCall = fetchMock.mock.calls[2]!;
+    // The edited value, not the original, was sent to confirm() — call #4 (after the master-resume check, upload, and the review screen's own credit-estimate fetch).
+    const confirmCall = fetchMock.mock.calls[3]!;
     expect(confirmCall[0]).toContain('/cv-import/cvi-1/confirm');
     const sentBody = JSON.parse(confirmCall[1].body as string);
     expect(sentBody.personalData.fullName).toBe('Ana P. Machava');
@@ -201,6 +228,7 @@ describe('ImportCvPage', () => {
     mockFetchSequence([
       NO_MASTER_RESUME,
       { body: { success: true, data: uploadedCvImport } },
+      CREDIT_ESTIMATE,
       {
         body: {
           success: true,
@@ -235,6 +263,7 @@ describe('ImportCvPage', () => {
     mockFetchSequence([
       NO_MASTER_RESUME,
       { body: { success: true, data: uploadedCvImport } },
+      CREDIT_ESTIMATE,
       { body: { success: true, data: { ...uploadedCvImport, status: 'DISCARDED' } } },
     ]);
     renderWithQueryClient(<ImportCvPage />);
@@ -298,6 +327,7 @@ describe('ImportCvPage', () => {
         EXISTING_MASTER_RESUME,
         { body: { success: true, data: uploadedCvImport } },
         MERGE_PREVIEW_EMPTY,
+        CREDIT_ESTIMATE,
       ]);
       renderWithQueryClient(<ImportCvPage />);
 
@@ -333,6 +363,7 @@ describe('ImportCvPage', () => {
             },
           },
         },
+        CREDIT_ESTIMATE,
       ]);
       renderWithQueryClient(<ImportCvPage />);
 
@@ -354,6 +385,7 @@ describe('ImportCvPage', () => {
         EXISTING_MASTER_RESUME,
         { body: { success: true, data: uploadedCvImport } },
         MERGE_PREVIEW_EMPTY,
+        CREDIT_ESTIMATE,
         {
           body: {
             success: true,
@@ -381,7 +413,7 @@ describe('ImportCvPage', () => {
         expect(screen.getByText('Currículo Principal atualizado')).toBeInTheDocument(),
       );
       expect(toast.success).toHaveBeenCalledWith('Currículo Principal atualizado com sucesso.');
-      const confirmCall = fetchMock.mock.calls[3]!;
+      const confirmCall = fetchMock.mock.calls[4]!;
       expect(confirmCall[0]).toContain('/cv-import/cvi-1/confirm');
       expect(JSON.parse(confirmCall[1].body as string).strategy).toBe('merge');
     });

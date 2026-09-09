@@ -12,6 +12,8 @@ import type { ProfileService } from '../profile/profile.service';
 import type { MasterResumeService } from '../master-resume/master-resume.service';
 import type { ResumeSectionsService } from '../resume-sections/resume-sections.service';
 import type { RequestUser } from '../auth/interfaces/request-with-user.interface';
+import type { AiOrchestrationService } from '../ai-orchestration/pipeline/ai-orchestration.service';
+import { AIFeature } from '../ai-orchestration/constants/ai-feature.enum';
 
 describe('CvImportService', () => {
   let repository: jest.Mocked<CvImportRepository>;
@@ -20,6 +22,7 @@ describe('CvImportService', () => {
   let masterResumeService: jest.Mocked<MasterResumeService>;
   let sectionsService: jest.Mocked<ResumeSectionsService>;
   let eventEmitter: { emit: jest.Mock };
+  let aiOrchestrationService: jest.Mocked<AiOrchestrationService>;
   let service: CvImportService;
 
   const owner: RequestUser = { id: 'user-1', role: UserRole.USER };
@@ -90,6 +93,27 @@ describe('CvImportService', () => {
     } as unknown as jest.Mocked<ResumeSectionsService>;
     eventEmitter = { emit: jest.fn() };
 
+    aiOrchestrationService = {
+      execute: jest.fn().mockResolvedValue({
+        text: JSON.stringify({
+          fieldSuggestions: [
+            {
+              section: 'workExperiences',
+              index: 0,
+              field: 'position',
+              originalValue: 'Engineer',
+              suggestedValue: 'Software Engineer',
+              reason: 'More specific and standard title.',
+              confidence: 0.8,
+            },
+          ],
+          unresolvedFields: [],
+        }),
+        creditsCharged: 30,
+        aiRequestId: 'ai-req-1',
+      }),
+    } as unknown as jest.Mocked<AiOrchestrationService>;
+
     service = new CvImportService(
       repository,
       parser,
@@ -98,6 +122,7 @@ describe('CvImportService', () => {
       sectionsService,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       eventEmitter as any,
+      aiOrchestrationService,
     );
   });
 
@@ -569,6 +594,187 @@ describe('CvImportService', () => {
         expect.any(String),
         expect.objectContaining({ action: 'deleted', entityType: 'cv_import' }),
       );
+    });
+  });
+
+  describe('enhanceWithAi (FASE 22 — CV Import AI)', () => {
+    it('executes via AiOrchestrationService with the CV_IMPORT feature and a fresh idempotency key', async () => {
+      await service.enhanceWithAi(owner, owner.id, cvImportRow.id);
+
+      expect(aiOrchestrationService.execute).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: owner.id,
+          feature: AIFeature.CV_IMPORT,
+          idempotencyKey: expect.stringContaining(`cv-import-ai:${owner.id}:`),
+        }),
+      );
+    });
+
+    it('persists validated suggestions, unresolvedFields, aiRequestId, and creditsUsed onto the SAME CvImport row', async () => {
+      const result = await service.enhanceWithAi(owner, owner.id, cvImportRow.id);
+
+      expect(repository.update).toHaveBeenCalledWith(cvImportRow.id, {
+        aiSuggestions: [
+          expect.objectContaining({
+            section: 'workExperiences',
+            index: 0,
+            field: 'position',
+            originalValue: 'Engineer',
+            suggestedValue: 'Software Engineer',
+          }),
+        ],
+        aiUnresolvedFields: [],
+        aiRequestId: 'ai-req-1',
+        creditsUsed: 30,
+      });
+      expect(result.aiSuggestions).toBeDefined();
+    });
+
+    it('never calls CreditService/credit logic directly — only AiOrchestrationService.execute()', () => {
+      // Structural check: the service has no CreditService dependency at
+      // all (see constructor) — this test documents that intent explicitly,
+      // matching every other AI feature's own equivalent test.
+      expect(service).not.toHaveProperty('creditService');
+    });
+
+    it('rejects when the import is not in EXTRACTED status', async () => {
+      repository.findById.mockResolvedValue({ ...cvImportRow, status: 'CONFIRMED' } as never);
+      await expect(service.enhanceWithAi(owner, owner.id, cvImportRow.id)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(aiOrchestrationService.execute).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException for an import owned by someone else', async () => {
+      repository.findById.mockResolvedValue({ ...cvImportRow, userId: 'someone-else' } as never);
+      await expect(service.enhanceWithAi(owner, owner.id, cvImportRow.id)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('rejects a stranger acting on another user', async () => {
+      await expect(service.enhanceWithAi(stranger, owner.id, cvImportRow.id)).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+
+    it('drops a suggestion referencing a field that does not exist in the real draft, keeping only the genuinely valid one', async () => {
+      aiOrchestrationService.execute.mockResolvedValue({
+        text: JSON.stringify({
+          fieldSuggestions: [
+            {
+              section: 'workExperiences',
+              index: 0,
+              field: 'position',
+              originalValue: 'Engineer',
+              suggestedValue: 'Software Engineer',
+              reason: 'real, valid suggestion',
+              confidence: 0.8,
+            },
+            {
+              section: 'workExperiences',
+              index: 5, // out of range — parsedData only has 2 entries
+              field: 'position',
+              originalValue: 'Engineer',
+              suggestedValue: 'Fabricated Title',
+              reason: 'hallucinated',
+              confidence: 0.9,
+            },
+          ],
+          unresolvedFields: [],
+        }),
+        creditsCharged: 30,
+        aiRequestId: 'ai-req-2',
+      } as never);
+
+      const result = await service.enhanceWithAi(owner, owner.id, cvImportRow.id);
+      expect(result.aiSuggestions).toHaveLength(1);
+      expect((result.aiSuggestions as unknown[])[0]).toMatchObject({ index: 0 });
+    });
+
+    it('throws InvalidPromptError (triggering the same automatic refund as any other pipeline failure) when every suggestion references a non-existent field', async () => {
+      aiOrchestrationService.execute.mockImplementation((async (request: {
+        options?: { responseValidator?: (r: { text: string }) => void };
+      }) => {
+        const badText = JSON.stringify({
+          fieldSuggestions: [
+            {
+              section: 'workExperiences',
+              index: 5,
+              field: 'position',
+              originalValue: 'Engineer',
+              suggestedValue: 'Fabricated Title',
+              reason: 'hallucinated',
+              confidence: 0.9,
+            },
+          ],
+          unresolvedFields: [],
+        });
+        request.options?.responseValidator?.({ text: badText });
+        return { text: badText, creditsCharged: 30, aiRequestId: 'ai-req-2b' };
+      }) as never);
+
+      await expect(service.enhanceWithAi(owner, owner.id, cvImportRow.id)).rejects.toThrow();
+      expect(repository.update).not.toHaveBeenCalled();
+    });
+
+    it('always substitutes the REAL current value as originalValue, never trusting the AI response echo', async () => {
+      aiOrchestrationService.execute.mockResolvedValue({
+        text: JSON.stringify({
+          fieldSuggestions: [
+            {
+              section: 'workExperiences',
+              index: 0,
+              field: 'position',
+              originalValue: 'something the AI misremembered',
+              suggestedValue: 'Software Engineer',
+              reason: 'clean up',
+              confidence: 0.7,
+            },
+          ],
+          unresolvedFields: [],
+        }),
+        creditsCharged: 30,
+        aiRequestId: 'ai-req-3',
+      } as never);
+
+      const result = await service.enhanceWithAi(owner, owner.id, cvImportRow.id);
+      expect((result.aiSuggestions as unknown[])[0]).toMatchObject({
+        originalValue: 'Engineer',
+      });
+    });
+
+    it('propagates the error and persists nothing when AiOrchestrationService throws (refund already handled inside the pipeline)', async () => {
+      aiOrchestrationService.execute.mockRejectedValue(new Error('insufficient credits'));
+      await expect(service.enhanceWithAi(owner, owner.id, cvImportRow.id)).rejects.toThrow(
+        'insufficient credits',
+      );
+      expect(repository.update).not.toHaveBeenCalled();
+    });
+
+    it('the responseValidator passed to AiOrchestrationService throws InvalidPromptError when every suggestion is invalid', async () => {
+      aiOrchestrationService.execute.mockImplementation((async (request: {
+        options?: { responseValidator?: (r: { text: string }) => void };
+      }) => {
+        const badText = JSON.stringify({
+          fieldSuggestions: [
+            {
+              section: 'skills',
+              index: 99,
+              field: 'name',
+              originalValue: '',
+              suggestedValue: 'x',
+              reason: 'r',
+              confidence: 0.5,
+            },
+          ],
+          unresolvedFields: [],
+        });
+        request.options?.responseValidator?.({ text: badText });
+        return { text: badText, creditsCharged: 30, aiRequestId: 'ai-req-4' };
+      }) as never);
+
+      await expect(service.enhanceWithAi(owner, owner.id, cvImportRow.id)).rejects.toThrow();
     });
   });
 });

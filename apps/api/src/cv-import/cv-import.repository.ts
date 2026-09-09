@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import type { CvFileType, CvImport, CvImportStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CvFieldConfidence, ExtractedCvData } from './interfaces/extracted-cv-data.interface';
+import type { CvImportAiSuggestion } from './interfaces/cv-import-ai.interface';
 
 export interface CreateCvImportData {
   fileName: string;
@@ -18,6 +19,11 @@ export interface UpdateCvImportData {
   status?: CvImportStatus;
   masterResumeId?: string;
   errorMessage?: string;
+  /** FASE 22 — CV Import AI. Set together by CvImportService.enhanceWithAi(); never touched by the deterministic upload()/confirm() flow. */
+  aiSuggestions?: CvImportAiSuggestion[];
+  aiUnresolvedFields?: string[];
+  aiRequestId?: string;
+  creditsUsed?: number;
 }
 
 /** Only Prisma access for the `cv_imports` table lives here. */
@@ -48,7 +54,13 @@ export class CvImportRepository {
   }
 
   update(id: string, data: UpdateCvImportData): Promise<CvImport> {
-    return this.prisma.cvImport.update({ where: { id }, data });
+    return this.prisma.cvImport.update({
+      where: { id },
+      data: {
+        ...data,
+        aiSuggestions: data.aiSuggestions as unknown as Prisma.InputJsonValue | undefined,
+      },
+    });
   }
 
   softDelete(id: string): Promise<CvImport> {

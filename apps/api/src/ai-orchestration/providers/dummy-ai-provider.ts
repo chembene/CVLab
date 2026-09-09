@@ -110,7 +110,14 @@ export class DummyAIProvider implements AIProvider {
    * `sectionRecommendations`/`actionPlan` — FASE 20, Template
    * Recommendation's `templateRecommendations` — FASE 21, sourced from real
    * ids found in the prompt itself via `extractEntityIds()` rather than
-   * fabricated, reusing `summary` as-is, everything else stays
+   * fabricated, CV Import AI's `fieldSuggestions`/`unresolvedFields` — FASE
+   * 22, sourced from the prompt's own embedded `ELIGIBLE_FIELDS_JSON` block
+   * (see `extractCvImportEligibleFields()`) so every dummy suggestion
+   * targets a real, already-extracted field instead of being rejected by
+   * `validateCvImportAiSuggestions()` — deliberately named `fieldSuggestions`,
+   * not `suggestions`, to avoid colliding with Resume Optimization's own
+   * differently-shaped `suggestions` field in this same envelope, everything
+   * else stays
    * fixed-shape), so DummyAIProvider never needs to learn which feature is
    * asking — each feature's own response parser reads only the fields it
    * cares about and ignores the rest.
@@ -201,8 +208,50 @@ export class DummyAIProvider implements AIProvider {
           (parseInt(hash.slice((i * 2) % 60, ((i * 2) % 60) + 2) || hash.slice(0, 2), 16) % 40),
         reason: `Deterministic dummy reason ${i + 1} (hash ${hash.slice(0, 8)}).`,
       })),
+      // FASE 22 — CV Import AI's ParsedCvImportAiResponse shape. Every
+      // suggestion targets a real, already-extracted field pulled straight
+      // out of the prompt's own embedded ELIGIBLE_FIELDS_JSON block (see
+      // extractCvImportEligibleFields()) — never a fabricated field — so the
+      // dummy response actually passes CvImportService's real-field
+      // validation instead of every suggestion being dropped.
+      fieldSuggestions: this.extractCvImportEligibleFields(prompt)
+        .slice(0, 3)
+        .map((eligible, i) => ({
+          section: eligible.section,
+          index: eligible.index,
+          field: eligible.field,
+          originalValue: eligible.originalValue,
+          suggestedValue: `${eligible.originalValue} (revisão sugerida, hash ${hash.slice(0, 6)})`,
+          reason: `Deterministic dummy revision reason ${i + 1} (hash ${hash.slice(0, 8)}).`,
+          confidence:
+            0.6 + (parseInt(hash.slice(i * 2, i * 2 + 2) || hash.slice(0, 2), 16) % 30) / 100,
+        })),
+      unresolvedFields: [`Deterministic dummy unresolved field note (hash ${hash.slice(0, 8)}).`],
     };
     return JSON.stringify(payload);
+  }
+
+  /**
+   * FASE 22 — scrapes the literal `ELIGIBLE_FIELDS_JSON: [...]` marker
+   * `CvImportPromptBuilder` embeds in its own prompt (see
+   * `buildEligibleFields()`/`cv-import-ai-validator.ts`) — the exact same
+   * "read a JSON blob the feature's own PromptBuilder already computed and
+   * embedded" philosophy `extractEntityIds()` established for Template
+   * Recommendation (FASE 21), applied to a richer per-field shape instead of
+   * a flat id list. Returns an empty array (never throws) when the marker is
+   * absent — a prompt from any OTHER feature simply won't contain it.
+   */
+  private extractCvImportEligibleFields(
+    prompt: string,
+  ): Array<{ section: string; index?: number; field: string; originalValue: string }> {
+    const match = prompt.match(/ELIGIBLE_FIELDS_JSON:\s*(\[[\s\S]*?\])\n/);
+    if (!match?.[1]) return [];
+    try {
+      const parsed: unknown = JSON.parse(match[1]);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
   }
 
   private hash(text: string): string {

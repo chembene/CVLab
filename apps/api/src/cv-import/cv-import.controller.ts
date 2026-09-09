@@ -43,6 +43,12 @@ export class CvImportController {
     return this.cvImportService.previewMerge(user, user.id, id);
   }
 
+  /** FASE 22 — optional, separate, credit-charging AI enhancement pass over the already-extracted draft. Never writes to Profile/MasterResume/sections itself — only persists suggestions for the review screen; confirm() below is still the only write path. */
+  @Post(':id/enhance')
+  enhanceWithAi(@CurrentUser() user: RequestUser, @Param('id') id: string) {
+    return this.cvImportService.enhanceWithAi(user, user.id, id);
+  }
+
   @Post(':id/confirm')
   confirm(
     @CurrentUser() user: RequestUser,

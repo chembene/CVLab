@@ -8,11 +8,11 @@ import { PromptBuilder } from '../interfaces/prompt.interface';
  * module registers its own builder in its `onModuleInit()` — see
  * ResumeOptimizationModule (Phase 7) for the first example. Cover Letter,
  * Interview, Career Advisor (FASE 18), LinkedIn (FASE 19), ATS AI
- * (FASE 20), and Template Recommendation (FASE 21) now register theirs the
- * same way; `INTERVIEW` (the generic Phase 6 placeholder, superseded by its
- * 6 mode-specific keys) and `CV_IMPORT` (a future AI-assisted variant of
- * the already-shipped deterministic CV Import Engine) remain deliberately
- * unregistered. AiOrchestrationService checks `has()` during its "Validate
+ * (FASE 20), Template Recommendation (FASE 21), and CV Import AI (FASE 22)
+ * now register theirs the same way; only `INTERVIEW` (the generic Phase 6
+ * placeholder, superseded by its 6 mode-specific keys) remains deliberately
+ * unregistered — every other reserved AIFeature key with a real, briefed
+ * use case now has one. AiOrchestrationService checks `has()` during its "Validate
  * Request" step, before any credit is charged, so calling execute() for an
  * unimplemented feature fails fast and free.
  */

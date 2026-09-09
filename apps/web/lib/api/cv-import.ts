@@ -2,6 +2,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api-client';
 import type { MasterResume } from './master-resume';
 
+/** Mirrors AIFeature.CV_IMPORT's string value in apps/api/src/ai-orchestration/constants/ai-feature.enum.ts — same hand-synced-featureKey convention as every other AI feature's own *_FEATURE_KEY constant. */
+export const CV_IMPORT_AI_FEATURE_KEY = 'cv_import';
+
 /**
  * Mirrors apps/api/src/cv-import/interfaces/extracted-cv-data.interface.ts —
  * field names intentionally match Profile/MasterResume/section columns so
@@ -172,6 +175,37 @@ export type CvFieldConfidence = Record<string, number>;
 export type CvImportStatus = 'PENDING' | 'EXTRACTED' | 'CONFIRMED' | 'DISCARDED' | 'FAILED';
 export type CvFileType = 'PDF' | 'DOCX';
 
+/** FASE 22 — CV Import AI. Every top-level area of ExtractedCvData a suggestion can target. Mirrors apps/api's CvImportAiSection. */
+export type CvImportAiSection =
+  | 'personalData'
+  | 'summary'
+  | 'workExperiences'
+  | 'educations'
+  | 'skills'
+  | 'languages'
+  | 'certificates'
+  | 'projects'
+  | 'awards'
+  | 'volunteerExperiences'
+  | 'references';
+
+/**
+ * FASE 22 — one proposed revision to a single field of a single
+ * already-extracted entry. `originalValue` is always the REAL current value
+ * (the backend never trusts the AI's own echo of it — see
+ * cv-import-ai-validator.ts), so "Original → Sugestão" is always grounded in
+ * truth. Mirrors apps/api's CvImportAiSuggestion.
+ */
+export interface CvImportAiSuggestion {
+  section: CvImportAiSection;
+  index?: number;
+  field: string;
+  originalValue: string;
+  suggestedValue: string;
+  reason: string;
+  confidence: number;
+}
+
 export interface CvImport {
   id: string;
   userId: string;
@@ -185,6 +219,9 @@ export interface CvImport {
   creditsUsed: number;
   masterResumeId?: string | null;
   errorMessage?: string | null;
+  /** FASE 22 — CV Import AI. Both null until enhanceWithAi() (POST :id/enhance) runs; an optional, separate step. */
+  aiSuggestions?: CvImportAiSuggestion[] | null;
+  aiUnresolvedFields?: string[] | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -246,6 +283,19 @@ export function useMergePreview(id: string | undefined) {
     queryKey: ['cv-imports', id, 'merge-preview'],
     queryFn: () => apiFetch<MergePreview>(`/cv-import/${id}/merge-preview`),
     enabled: Boolean(id),
+  });
+}
+
+/** FASE 22 — optional, separate, credit-charging AI enhancement pass over the already-extracted draft. Never writes to Profile/MasterResume/sections itself — only returns suggestions for the review screen to show; the existing useConfirmCvImport() call is still the only write path. */
+export function useEnhanceCvImportWithAi(id: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiFetch<CvImport>(`/cv-import/${id}/enhance`, { method: 'POST' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['cv-imports'] });
+      queryClient.invalidateQueries({ queryKey: ['credits', 'wallet'] });
+      queryClient.invalidateQueries({ queryKey: ['credits', 'estimate'] });
+    },
   });
 }
 

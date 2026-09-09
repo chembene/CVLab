@@ -28,9 +28,9 @@ export interface PromptResult {
  * Abstract framework every feature-specific builder implements.
  * ResumeOptimizationPromptBuilder (Phase 7) is the first; CoverLetterPromptBuilder,
  * InterviewPromptBuilder, CareerAdvisorPromptBuilder (FASE 18),
- * LinkedInPromptBuilder (FASE 19), AtsAiPromptBuilder (FASE 20), and
- * TemplateRecommendationPromptBuilder (FASE 21) all followed the same
- * pattern.
+ * LinkedInPromptBuilder (FASE 19), AtsAiPromptBuilder (FASE 20),
+ * TemplateRecommendationPromptBuilder (FASE 21), and CvImportPromptBuilder
+ * (FASE 22) all followed the same pattern.
  */
 export abstract class PromptBuilder<TInput = unknown> {
   abstract readonly metadata: PromptMetadata;

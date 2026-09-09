@@ -11,6 +11,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { CvUploadDropzone } from '@/components/cv-import/CvUploadDropzone';
 import { CvImportReview } from '@/components/cv-import/CvImportReview';
+import { CvImportAiSuggestions } from '@/components/cv-import/CvImportAiSuggestions';
 import {
   useUploadCvImport,
   useConfirmCvImport,
@@ -282,6 +283,15 @@ export default function ImportCvPage() {
               )}
             </AlertDescription>
           </Alert>
+
+          <CvImportAiSuggestions
+            cvImportId={cvImport.id}
+            reviewData={reviewData}
+            onChange={setReviewData}
+            aiSuggestions={cvImport.aiSuggestions}
+            aiUnresolvedFields={cvImport.aiUnresolvedFields}
+            onEnhanced={setCvImport}
+          />
 
           <CvImportReview
             value={reviewData}
