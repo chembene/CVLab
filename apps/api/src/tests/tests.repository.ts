@@ -64,24 +64,78 @@ export class TestsRepository {
     });
   }
 
-  /** One answer per (session, question) — updates in place if the user already answered this question in this session (editable until completion), otherwise creates. Relies on the `@@unique([testSessionId, questionId])` constraint added this phase. */
-  upsertAnswer(
+  /**
+   * Records one answer — one row per (session, question), updated in place
+   * if already answered (editable until the attempt closes) — but ONLY while
+   * the attempt is still open and inside its time limit, decided atomically
+   * with the write. The conditional `updateMany` takes the session row's
+   * write lock until this transaction commits, so it serializes against
+   * completeSessionIfOpen(): an answer either commits before the attempt is
+   * closed (and is scored) or finds it closed and writes nothing. The
+   * deadline test lives in the same WHERE clause (`startedAt > now - limit`),
+   * so a late answer can never slip in between a check and the write.
+   * Returns null when the attempt is closed or past its deadline.
+   */
+  saveAnswerIfOpen(
     testSessionId: string,
     questionId: string,
     selectedAnswer: string | null,
     isCorrect: boolean,
-  ): Promise<TestAnswer> {
-    return this.prisma.testAnswer.upsert({
-      where: { testSessionId_questionId: { testSessionId, questionId } },
-      create: { testSessionId, questionId, selectedAnswer, isCorrect },
-      update: { selectedAnswer, isCorrect },
+    timeLimitMinutes: number | null,
+  ): Promise<TestAnswer | null> {
+    return this.prisma.$transaction(async (tx) => {
+      const open = await tx.testSession.updateMany({
+        where: {
+          id: testSessionId,
+          status: 'IN_PROGRESS',
+          ...(timeLimitMinutes !== null
+            ? { startedAt: { gt: new Date(Date.now() - timeLimitMinutes * 60_000) } }
+            : {}),
+        },
+        data: { updatedAt: new Date() },
+      });
+      if (open.count === 0) return null;
+      return tx.testAnswer.upsert({
+        where: { testSessionId_questionId: { testSessionId, questionId } },
+        create: { testSessionId, questionId, selectedAnswer, isCorrect },
+        update: { selectedAnswer, isCorrect },
+      });
     });
   }
 
-  completeSession(id: string, score: number): Promise<TestSession> {
-    return this.prisma.testSession.update({
-      where: { id },
-      data: { status: 'COMPLETED', score, completedAt: new Date() },
+  /**
+   * Closes and scores an attempt exactly once. The `IN_PROGRESS → COMPLETED`
+   * flip is a conditional `updateMany`, so of any number of concurrent
+   * callers (manual submit, automatic expiry, repeated requests) exactly one
+   * gets `count: 1`; every other gets null and writes nothing — no duplicate
+   * result, no double event. Status, completion time and score are committed
+   * in one transaction, and the score is computed from the answers visible
+   * after the row lock is held, i.e. after every earlier saveAnswerIfOpen()
+   * has committed. `scoreOf` is passed in so scoring stays in one place
+   * (test-scoring.util).
+   */
+  completeSessionIfOpen(
+    sessionId: string,
+    completedAt: Date,
+    scoreOf: (correctCount: number, totalQuestions: number) => number,
+  ): Promise<{ session: TestSession; correctCount: number; totalQuestions: number } | null> {
+    return this.prisma.$transaction(async (tx) => {
+      const flipped = await tx.testSession.updateMany({
+        where: { id: sessionId, status: 'IN_PROGRESS' },
+        data: { status: 'COMPLETED', completedAt },
+      });
+      if (flipped.count === 0) return null;
+
+      const current = await tx.testSession.findUniqueOrThrow({ where: { id: sessionId } });
+      const [correctCount, totalQuestions] = await Promise.all([
+        tx.testAnswer.count({ where: { testSessionId: sessionId, isCorrect: true } }),
+        tx.question.count({ where: { testId: current.testId, deletedAt: null } }),
+      ]);
+      const session = await tx.testSession.update({
+        where: { id: sessionId },
+        data: { score: scoreOf(correctCount, totalQuestions) },
+      });
+      return { session, correctCount, totalQuestions };
     });
   }
 

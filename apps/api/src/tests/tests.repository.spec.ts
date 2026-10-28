@@ -9,15 +9,21 @@ describe('TestsRepository', () => {
       create: jest.fn(),
       findFirst: jest.fn(),
       findMany: jest.fn(),
+      findUniqueOrThrow: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
     };
-    const testAnswer = { upsert: jest.fn() };
-    const question = { findFirst: jest.fn() };
+    const testAnswer = { upsert: jest.fn(), count: jest.fn() };
+    const question = { findFirst: jest.fn(), count: jest.fn() };
     const prisma = {
       test,
       testSession,
       testAnswer,
       question,
+      // Runs the callback against the same mocks, like a real interactive transaction.
+      $transaction: jest.fn((fn: (tx: unknown) => unknown) =>
+        fn({ testSession, testAnswer, question }),
+      ),
     } as unknown as jest.Mocked<PrismaService>;
     return { prisma, test, testSession, testAnswer, question };
   }
@@ -89,33 +95,113 @@ describe('TestsRepository', () => {
     });
   });
 
-  it('upsertAnswer() keys on the (testSessionId, questionId) unique constraint', async () => {
-    const { prisma, testAnswer } = buildPrismaMock();
-    const repository = new TestsRepository(prisma);
+  describe('saveAnswerIfOpen()', () => {
+    it('upserts on the (testSessionId, questionId) unique constraint when the attempt is still open', async () => {
+      const { prisma, testSession, testAnswer } = buildPrismaMock();
+      testSession.updateMany.mockResolvedValue({ count: 1 });
+      const repository = new TestsRepository(prisma);
 
-    await repository.upsertAnswer('session-1', 'q1', 'SELECT', true);
+      await repository.saveAnswerIfOpen('session-1', 'q1', 'SELECT', true, null);
 
-    expect(testAnswer.upsert).toHaveBeenCalledWith({
-      where: { testSessionId_questionId: { testSessionId: 'session-1', questionId: 'q1' } },
-      create: {
-        testSessionId: 'session-1',
-        questionId: 'q1',
-        selectedAnswer: 'SELECT',
-        isCorrect: true,
-      },
-      update: { selectedAnswer: 'SELECT', isCorrect: true },
+      expect(testAnswer.upsert).toHaveBeenCalledWith({
+        where: { testSessionId_questionId: { testSessionId: 'session-1', questionId: 'q1' } },
+        create: {
+          testSessionId: 'session-1',
+          questionId: 'q1',
+          selectedAnswer: 'SELECT',
+          isCorrect: true,
+        },
+        update: { selectedAnswer: 'SELECT', isCorrect: true },
+      });
+    });
+
+    it('guards the write with a conditional update on status IN_PROGRESS (takes the session row lock)', async () => {
+      const { prisma, testSession } = buildPrismaMock();
+      testSession.updateMany.mockResolvedValue({ count: 1 });
+      const repository = new TestsRepository(prisma);
+
+      await repository.saveAnswerIfOpen('session-1', 'q1', 'SELECT', true, null);
+
+      expect(testSession.updateMany).toHaveBeenCalledWith({
+        where: { id: 'session-1', status: 'IN_PROGRESS' },
+        data: { updatedAt: expect.any(Date) },
+      });
+    });
+
+    it('puts the deadline in the same WHERE clause: startedAt must be later than now minus the limit', async () => {
+      const { prisma, testSession } = buildPrismaMock();
+      testSession.updateMany.mockResolvedValue({ count: 1 });
+      const repository = new TestsRepository(prisma);
+      const before = Date.now();
+
+      await repository.saveAnswerIfOpen('session-1', 'q1', 'SELECT', true, 10);
+
+      const where = testSession.updateMany.mock.calls[0][0].where;
+      expect(where.status).toBe('IN_PROGRESS');
+      const cutoff = (where.startedAt.gt as Date).getTime();
+      expect(cutoff).toBeGreaterThanOrEqual(before - 10 * 60_000);
+      expect(cutoff).toBeLessThanOrEqual(Date.now() - 10 * 60_000);
+    });
+
+    it('writes nothing and returns null when the attempt is closed or past its deadline', async () => {
+      const { prisma, testSession, testAnswer } = buildPrismaMock();
+      testSession.updateMany.mockResolvedValue({ count: 0 });
+      const repository = new TestsRepository(prisma);
+
+      const result = await repository.saveAnswerIfOpen('session-1', 'q1', 'SELECT', true, 10);
+
+      expect(result).toBeNull();
+      expect(testAnswer.upsert).not.toHaveBeenCalled();
     });
   });
 
-  it('completeSession() sets status COMPLETED, the score, and completedAt', async () => {
-    const { prisma, testSession } = buildPrismaMock();
-    const repository = new TestsRepository(prisma);
+  describe('completeSessionIfOpen()', () => {
+    it('flips IN_PROGRESS to COMPLETED conditionally, then scores from the persisted answers, in one transaction', async () => {
+      const { prisma, testSession, testAnswer, question } = buildPrismaMock();
+      const completedAt = new Date('2026-01-01T10:15:00.000Z');
+      testSession.updateMany.mockResolvedValue({ count: 1 });
+      testSession.findUniqueOrThrow.mockResolvedValue({ id: 'session-1', testId: 'test-1' });
+      testAnswer.count.mockResolvedValue(3);
+      question.count.mockResolvedValue(4);
+      testSession.update.mockResolvedValue({ id: 'session-1', score: 75 });
+      const repository = new TestsRepository(prisma);
+      const scoreOf = jest.fn().mockReturnValue(75);
 
-    await repository.completeSession('session-1', 80);
+      const result = await repository.completeSessionIfOpen('session-1', completedAt, scoreOf);
 
-    expect(testSession.update).toHaveBeenCalledWith({
-      where: { id: 'session-1' },
-      data: { status: 'COMPLETED', score: 80, completedAt: expect.any(Date) },
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(testSession.updateMany).toHaveBeenCalledWith({
+        where: { id: 'session-1', status: 'IN_PROGRESS' },
+        data: { status: 'COMPLETED', completedAt },
+      });
+      expect(testAnswer.count).toHaveBeenCalledWith({
+        where: { testSessionId: 'session-1', isCorrect: true },
+      });
+      expect(question.count).toHaveBeenCalledWith({ where: { testId: 'test-1', deletedAt: null } });
+      expect(scoreOf).toHaveBeenCalledWith(3, 4);
+      expect(testSession.update).toHaveBeenCalledWith({
+        where: { id: 'session-1' },
+        data: { score: 75 },
+      });
+      expect(result).toEqual({
+        session: { id: 'session-1', score: 75 },
+        correctCount: 3,
+        totalQuestions: 4,
+      });
+    });
+
+    it('returns null and scores nothing when another caller already closed the attempt (idempotent)', async () => {
+      const { prisma, testSession, testAnswer } = buildPrismaMock();
+      testSession.updateMany.mockResolvedValue({ count: 0 });
+      const repository = new TestsRepository(prisma);
+      const scoreOf = jest.fn();
+
+      const result = await repository.completeSessionIfOpen('session-1', new Date(), scoreOf);
+
+      expect(result).toBeNull();
+      expect(scoreOf).not.toHaveBeenCalled();
+      expect(testAnswer.count).not.toHaveBeenCalled();
+      expect(testSession.update).not.toHaveBeenCalled();
     });
   });
 

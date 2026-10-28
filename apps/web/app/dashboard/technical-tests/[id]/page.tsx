@@ -118,7 +118,7 @@ export default function TechnicalTestSessionPage() {
     if (secondsLeft <= 0) {
       setTimeUp(true);
       // The countdown is display-only: ask the server for the authoritative
-      // state, which now reports this attempt as EXPIRED.
+      // state — it closes and scores an overdue attempt on this very read.
       void refetch();
       return;
     }
@@ -140,6 +140,8 @@ export default function TechnicalTestSessionPage() {
       toast.success('Teste submetido.');
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Não foi possível submeter o teste.');
+      // E.g. the attempt was closed by the clock a moment earlier — show the real state.
+      void refetch();
     }
   }
 
@@ -157,8 +159,6 @@ export default function TechnicalTestSessionPage() {
   }
 
   const isCompleted = session.status === 'COMPLETED';
-  const isExpired = session.status === 'EXPIRED';
-  const isFinished = isCompleted || isExpired;
   const answeredCount = session.questions.filter((q) => q.selectedAnswer !== null).length;
 
   return (
@@ -183,32 +183,29 @@ export default function TechnicalTestSessionPage() {
           <CardContent className="flex flex-col items-center gap-3 py-8 text-center">
             <ScoreBadge score={session.score} size="lg" />
             <p className="text-sm text-muted-foreground">Resultado final</p>
+            {session.timedOut && (
+              <p className="text-sm text-muted-foreground">
+                O tempo terminou — a tentativa foi encerrada automaticamente e pontuada com as
+                respostas registadas até ao prazo.
+              </p>
+            )}
           </CardContent>
         </Card>
       )}
 
-      {isExpired && (
-        <Alert variant="destructive">
-          <Clock className="h-4 w-4" aria-hidden="true" />
-          <AlertTitle>Tentativa expirada</AlertTitle>
-          <AlertDescription role="status">
-            O tempo para este teste terminou. Esta tentativa já não aceita respostas nem submissão —
-            inicie uma nova tentativa para voltar a praticar.
-          </AlertDescription>
-        </Alert>
-      )}
-
-      {!isFinished && secondsLeft !== null && (
+      {!isCompleted && secondsLeft !== null && (
         <Alert variant={timeUp ? 'destructive' : secondsLeft < 60 ? 'warning' : 'default'}>
           <Clock className="h-4 w-4" aria-hidden="true" />
           <AlertTitle>{timeUp ? 'Tempo esgotado' : 'Tempo restante'}</AlertTitle>
           <AlertDescription role="status">
-            {timeUp ? 'O tempo para este teste terminou.' : formatClock(secondsLeft)}
+            {timeUp
+              ? 'O tempo para este teste terminou. A tentativa está a ser encerrada e pontuada…'
+              : formatClock(secondsLeft)}
           </AlertDescription>
         </Alert>
       )}
 
-      {!isFinished && (
+      {!isCompleted && (
         <p className="text-sm text-muted-foreground">
           {answeredCount} de {session.questions.length} perguntas respondidas.
         </p>
@@ -220,14 +217,14 @@ export default function TechnicalTestSessionPage() {
             key={question.id}
             question={question}
             index={index}
-            locked={isFinished}
+            locked={isCompleted}
             pending={submitAnswer.isPending}
             onSelect={(choice) => handleSelect(question.id, choice)}
           />
         ))}
       </div>
 
-      {!isFinished && (
+      {!isCompleted && (
         <div className="flex justify-end">
           <Button onClick={handleComplete} disabled={timeUp} loading={completeSession.isPending}>
             <Send className="mr-2 h-4 w-4" aria-hidden="true" />
@@ -236,7 +233,7 @@ export default function TechnicalTestSessionPage() {
         </div>
       )}
 
-      {isFinished && (
+      {isCompleted && (
         <div className="flex justify-end">
           <Button variant="outline" onClick={() => router.push('/dashboard/technical-tests')}>
             Voltar aos Testes Técnicos

@@ -26,7 +26,8 @@ const COVER_LETTER_FEATURE_KEY = AIFeature.COVER_LETTER;
  * data `prisma/seed-templates.ts` uses (idempotent, safe to run against a
  * DB that already has them from a real seed run), and `afterAll`
  * deliberately never deletes them — only the per-user data this suite
- * itself created.
+ * itself created, plus the Cover Letter `feature_pricing` fixture row it
+ * self-seeds (globally unique key: see afterAll).
  */
 describe('Template Engine (e2e)', () => {
   let app: INestApplication;
@@ -138,8 +139,18 @@ describe('Template Engine (e2e)', () => {
         ]);
       }
     } finally {
-      await app.close();
-      throttlerSpy.mockRestore();
+      try {
+        // The Cover Letter pricing row is a self-seeded test fixture (see
+        // beforeAll), not catalog data: `feature_pricing.feature_key` is
+        // globally unique, so leaving it behind made every later suite that
+        // creates the same key (cover-letter, application-pipeline) fail its
+        // beforeAll with a unique-constraint error — only when run after this
+        // one, which is why they passed in isolation.
+        await prisma.featurePricing.deleteMany({ where: { featureKey: COVER_LETTER_FEATURE_KEY } });
+      } finally {
+        await app.close();
+        throttlerSpy.mockRestore();
+      }
     }
   });
 

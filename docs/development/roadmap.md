@@ -1014,13 +1014,8 @@ both apps (zero warnings in the new module; existing warnings elsewhere are 100%
 
 **Finalisation pass** (after live verification of the running system) — three changes, all inside this phase:
 
-1. **Expired attempts.** An `IN_PROGRESS` attempt past its time limit is now reported as `EXPIRED` by the
-   server — derived at read time from the server clock (`resolveSessionStatus()`), never persisted, so no
-   background job or retroactive write is needed. The attempt list, the session view and the write guards share
-   that one rule; the frontend only renders the returned status. An expired attempt accepts no answers and can no
-   longer be submitted (409), and never reveals correct answers. This **reverses** the first implementation's
-   "a late final submit still scores" behaviour — a deliberate product decision (the cost: answers recorded
-   before the deadline are lost if the user never submitted in time). `COMPLETED` is unaffected.
+1. **Expired attempts** — first reported as a derived `EXPIRED` status with the attempt locked; **superseded
+   by the stabilisation pass below** (automatic close and scoring). Kept here only as history.
 2. **API dev/build fix (root cause found).** `nest build` / `nest start --watch` exited 0 while emitting
    nothing. `nest-cli.json` has `deleteOutDir: true` (wipes `dist/` before each build) but `tsconfig.build.json`
    inherits `incremental: true`, whose `.tsbuildinfo` cache defaulted to `apps/api/tsconfig.build.tsbuildinfo` —
@@ -1036,12 +1031,46 @@ Re-measured after the finalisation pass: backend unit **1283/1283** (135 suites)
 frontend full suite **264/266** (same 2 pre-existing `IntersectionObserver` failures) with the two Technical
 Tests page specs at 21/21 — this supersedes the earlier counts quoted above. Typecheck, lint (0 errors) and the
 full `npm run build` are clean; `prisma validate` passes.
-Full sequential e2e run (`--runInBand`, shared Postgres/Redis): **21/24 suites, 306/335 tests**. The 3 failing suites
-(`cv-import`, `cv-import-ai`, `application-pipeline`) do not touch this feature's code and each passed 100% when
-re-run on its own (12/12, 14/14, 8/8). The difference between the joint and isolated runs points to possible
-interference between suites or to the shared environment (state left behind, load), but **no root cause was
-investigated or proven** — it is recorded as an open, unexplained e2e-isolation issue, not as a Technical Tests
-regression and not as a confirmed flake.
+Full sequential e2e run at the time (`--runInBand`, shared Postgres/Redis): **21/24 suites, 306/335 tests**; the 3
+failing suites (`cv-import`, `cv-import-ai`, `application-pipeline`) were root-caused afterwards — see the
+stabilisation pass below.
+
+**Post-phase stabilisation** (three follow-ups, still inside this phase's scope):
+
+1. **Automatic submit at the deadline (product decision).** When the time runs out the attempt is closed and
+   scored by the server with the answers saved before the deadline (unanswered = incorrect), persisted as
+   `COMPLETED` with `completedAt` = the deadline and shown in the history with a "Tempo esgotado" marker; the
+   derived `EXPIRED` status was removed. No background job: the close is lazy (first request that touches an
+   overdue attempt, including the history list) and idempotent. Concurrency is handled with conditional
+   `updateMany` inside `$transaction` (the `CreditService` pattern): `completeSessionIfOpen()` lets exactly one
+   caller close and score an attempt, `saveAnswerIfOpen()` only writes while the attempt is open and inside the
+   limit. Real-Postgres e2e covers 8 simultaneous reads, 6 simultaneous submits (exactly one 201, five 409, one
+   history event) and an answer-versus-submit race; both guards were mutation-tested (removing either condition
+   makes those tests fail). No credit logic was touched — the feature stays free. See
+   [technical-tests.md](../architecture/technical-tests.md) §4. Scores already calculated are never recomputed.
+2. **Claude Preview ports.** The preview launcher injects the entry's `port` as `PORT`, which overrides
+   `.env`'s `PORT=4000`, so the single `dev` entry made the API try to bind 3000. `.claude/launch.json` now has
+   one entry per service — `api` (4000) and `web` (3000) — next to the untouched `dev` entry.
+3. **e2e joint-run failures — two independent root causes, both reproduced.**
+   - `template-engine.e2e-spec.ts` self-seeds a `feature_pricing` row (globally unique `feature_key`) and never
+     deleted it, so any later suite creating the same key (`cover-letter`, `application-pipeline`) failed its
+     `beforeAll` with a unique-constraint error — and passed alone, because the first suite to clean up removed the
+     stray row. Fixed in the spec's `afterAll`; a static check (`e2e-fixture-hygiene.spec.ts`) now fails any e2e
+     spec that writes pricing rows without deleting them (verified to fail before the fix).
+   - `cv-import`/`cv-import-ai` failed with "Test environment has been torn down" whenever they ran as the 3rd or
+     later suite of a run. `importEsm()` builds its `import()` with `new Function(...)`; V8 caches that compile by
+     source text across Jest contexts, so a later test file called a hook bound to an already torn-down earlier
+     environment. Giving the function body a per-evaluation unique comment fixes it (a unit test guards it and
+     fails on the old code); production, which evaluates the module once, is unaffected. An earlier assumption in
+     this document that the failures were plain shared-environment flakiness was wrong for these two suites.
+
+Measured after the stabilisation pass: backend unit **1321/1321** (137 suites), frontend **268/270** (the same 2
+pre-existing `IntersectionObserver` failures), `tests.e2e-spec.ts` **24/24**, typecheck/lint (0 errors) and the full
+`npm run build` clean, `prisma validate` OK. Full `npm run test:e2e`: **22/24 suites, 341/343 tests** — the three
+suites that failed before (`cv-import`, `cv-import-ai`, `application-pipeline`) now pass; the 2 remaining failures
+were 5 s per-test timeouts in `cover-letter` and `resume-optimization` (the "Admin access" test, which registers
+three accounts) in a run that took 620 s against 379 s earlier, and both suites passed in isolation straight
+afterwards (15/15, 12/12). Treated as load-related timeouts, not investigated further.
 
 ## Phase 0 Readiness
 

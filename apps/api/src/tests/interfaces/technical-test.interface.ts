@@ -8,8 +8,7 @@
  * fixed without a non-trivial ALTER TYPE migration for a table with zero
  * rows in any environment.
  */
-/** `EXPIRED` is derived at read time (resolveSessionStatus()), never persisted — the column only ever holds IN_PROGRESS or COMPLETED. */
-export type TestSessionStatus = 'IN_PROGRESS' | 'COMPLETED' | 'EXPIRED';
+export type TestSessionStatus = 'IN_PROGRESS' | 'COMPLETED';
 
 /** `Test.timeLimit` is denominated in MINUTES — undocumented anywhere before this phase (the column predates any implementation); this is the convention this phase establishes and the only place it's derived from. */
 export const TIME_LIMIT_UNIT = 'minutes';
@@ -43,6 +42,8 @@ export interface TestSessionView {
   score: number | null;
   startedAt: Date;
   completedAt: Date | null;
+  /** True when the attempt was closed automatically because its time limit ran out (completedAt is then exactly the deadline) rather than submitted by the user. */
+  timedOut: boolean;
   /** Server-computed — null when the test has no timeLimit, or once the session is COMPLETED. Never trust a client-reported value for this. */
   remainingSeconds: number | null;
   test: TechnicalTestSummary;

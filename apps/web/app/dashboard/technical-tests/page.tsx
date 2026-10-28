@@ -169,6 +169,7 @@ export default function TechnicalTestsPage() {
                     </div>
                     <div className="flex items-center gap-2">
                       <StatusBadge status={entry.status} />
+                      {entry.timedOut && <Badge variant="outline">Tempo esgotado</Badge>}
                       {entry.status === 'COMPLETED' && <ScoreBadge score={entry.score} size="sm" />}
                     </div>
                   </button>

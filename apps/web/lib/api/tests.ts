@@ -8,8 +8,7 @@ import { apiFetch } from '@/lib/api-client';
  * other feature's own hand-synced client types.
  */
 
-/** `EXPIRED` is derived by the server from its own clock (an overdue IN_PROGRESS attempt) — the client only displays it, never computes it. */
-export type TestSessionStatus = 'IN_PROGRESS' | 'COMPLETED' | 'EXPIRED';
+export type TestSessionStatus = 'IN_PROGRESS' | 'COMPLETED';
 
 export interface TechnicalTestSummary {
   id: string;
@@ -39,6 +38,8 @@ export interface TestSessionView {
   score: number | null;
   startedAt: string;
   completedAt: string | null;
+  /** True when the server closed the attempt because the time limit ran out (vs. the user submitting). */
+  timedOut: boolean;
   remainingSeconds: number | null;
   test: TechnicalTestSummary;
   questions: SanitizedTestQuestion[];
@@ -54,6 +55,7 @@ export interface TestSessionHistoryEntry {
   score: number | null;
   startedAt: string;
   completedAt: string | null;
+  timedOut: boolean;
 }
 
 export function useTechnicalTests(category?: string) {

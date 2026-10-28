@@ -1,8 +1,9 @@
 import type { Question, Test } from '@prisma/client';
-import { computeRemainingSeconds, resolveSessionStatus } from './test-timer.util';
+import { computeRemainingSeconds, wasTimedOut } from './test-timer.util';
 import type {
   SanitizedQuestion,
   TechnicalTestSummary,
+  TestSessionStatus,
   TestSessionView,
 } from './interfaces/technical-test.interface';
 import type { SessionWithRelations } from './tests.repository';
@@ -48,8 +49,6 @@ export function sanitizeQuestion(
  * complete, ordered question list (always passed in — not just the ones
  * with an answer so far, so an unanswered question still appears with
  * `selectedAnswer: null` instead of silently vanishing from the response).
- * `status` is the derived one (an overdue IN_PROGRESS session reads as
- * EXPIRED); an EXPIRED session never reveals answers — only COMPLETED does.
  * `revealAnswer` (COMPLETED sessions only) is decided in exactly one place
  * here, so no caller can accidentally leak answers for an in-progress
  * session.
@@ -58,7 +57,7 @@ export function buildSessionView(
   session: SessionWithRelations,
   allQuestions: Question[],
 ): TestSessionView {
-  const status = resolveSessionStatus(session.status, session.test.timeLimit, session.startedAt);
+  const status = session.status as TestSessionStatus;
   const revealAnswer = status === 'COMPLETED';
   const answersByQuestionId = new Map(session.answers.map((a) => [a.questionId, a]));
 
@@ -75,6 +74,7 @@ export function buildSessionView(
     score: session.score,
     startedAt: session.startedAt,
     completedAt: session.completedAt,
+    timedOut: wasTimedOut(session.test.timeLimit, session.startedAt, session.completedAt),
     remainingSeconds: revealAnswer
       ? null
       : computeRemainingSeconds(session.test.timeLimit, session.startedAt),

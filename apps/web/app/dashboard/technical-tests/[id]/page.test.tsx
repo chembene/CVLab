@@ -19,6 +19,7 @@ function makeInProgressSession(overrides: Partial<TestSessionView> = {}): TestSe
     score: null,
     startedAt: '2026-01-01T10:00:00.000Z',
     completedAt: null,
+    timedOut: false,
     remainingSeconds: 300,
     test: { id: 'test-1', title: 'SQL Básico', category: 'SQL', timeLimit: 10, questionCount: 1 },
     questions: [
@@ -174,30 +175,79 @@ describe('TechnicalTestSessionPage', () => {
     expect(screen.getByRole('button', { name: /SELECT/ })).toBeDisabled();
   });
 
-  it('renders an EXPIRED attempt as locked: explanation, no submit button, answers never revealed', async () => {
-    mockFetchByRoute({
-      session: makeInProgressSession({ status: 'EXPIRED', remainingSeconds: 0 }),
-    });
+  it('renders an attempt the server closed at the deadline as a normal result, with the timed-out notice', async () => {
+    mockFetchByRoute({ session: { ...makeCompletedSession(), timedOut: true, score: 50 } });
     renderWithQueryClient(<TechnicalTestSessionPage />);
-    expect(await screen.findByText('Tentativa expirada')).toBeInTheDocument();
-    expect(screen.getByText('Expired')).toBeInTheDocument();
+    expect(await screen.findByText('50')).toBeInTheDocument();
+    expect(screen.getByText(/encerrada automaticamente/)).toBeInTheDocument();
+    expect(screen.getByText(/SELECT consulta dados\./)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Submeter Teste/ })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'SELECT' })).toBeDisabled();
-    expect(screen.queryByText(/Explicação/)).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Voltar aos Testes Técnicos/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /SELECT/ })).toBeDisabled();
   });
 
-  it('asks the server for the authoritative state when the countdown reaches zero', async () => {
-    const mock = mockFetchByRoute({ session: makeInProgressSession({ remainingSeconds: 0 }) });
+  it('does not show the timed-out notice for an attempt the user submitted in time', async () => {
+    mockFetchByRoute({ session: makeCompletedSession() });
+    renderWithQueryClient(<TechnicalTestSessionPage />);
+    await screen.findByText('100');
+    expect(screen.queryByText(/encerrada automaticamente/)).not.toBeInTheDocument();
+  });
+
+  it('asks the server for the authoritative state when the countdown reaches zero, then shows the closed result', async () => {
+    const closed = { ...makeCompletedSession(), timedOut: true, score: 0 };
+    let sessionReads = 0;
+    const mock = jest.fn((url: string) => {
+      if (url.includes('/test-sessions/')) {
+        sessionReads += 1;
+        // First read: still in progress with 0 seconds left. Every later read: the server has closed it.
+        const data = sessionReads === 1 ? makeInProgressSession({ remainingSeconds: 0 }) : closed;
+        return Promise.resolve({ status: 200, json: async () => ({ success: true, data }) });
+      }
+      throw new Error(`Unexpected fetch call: ${url}`);
+    });
+    global.fetch = mock as unknown as typeof fetch;
+
+    renderWithQueryClient(<TechnicalTestSessionPage />);
+
+    // The "Tempo esgotado" notice is transient (it disappears as soon as the refetch
+    // lands), so only the stable outcome is asserted here; the transient state has
+    // its own test with a response that never closes.
+    expect(await screen.findByText(/encerrada automaticamente/)).toBeInTheDocument();
+    expect(screen.getByText('Completed')).toBeInTheDocument();
+    expect(sessionReads).toBeGreaterThanOrEqual(2);
+  });
+
+  it('keeps the submit button disabled while the time is up and the server close is pending', async () => {
+    mockFetchByRoute({ session: makeInProgressSession({ remainingSeconds: 0 }) });
     renderWithQueryClient(<TechnicalTestSessionPage />);
     expect(await screen.findByText('Tempo esgotado')).toBeInTheDocument();
-    await waitFor(() => {
-      const sessionFetches = mock.mock.calls.filter(([url]) =>
-        (url as string).includes('/test-sessions/'),
-      );
-      expect(sessionFetches.length).toBeGreaterThanOrEqual(2);
-    });
     expect(screen.getByRole('button', { name: /Submeter Teste/ })).toBeDisabled();
+  });
+
+  it('refetches the real state when submitting fails because the attempt was just closed', async () => {
+    const mock = mockFetchByRoute({
+      session: makeInProgressSession(),
+      complete: {
+        body: { success: false, error: { message: 'Already completed.', code: 'CONFLICT' } },
+        status: 409,
+      },
+    });
+    renderWithQueryClient(<TechnicalTestSessionPage />);
+    await screen.findByText(/Qual comando obtém dados\?/);
+    const readsBefore = mock.mock.calls.filter(
+      ([url]) =>
+        (url as string).includes('/test-sessions/') && !(url as string).includes('/complete'),
+    ).length;
+
+    fireEvent.click(screen.getByRole('button', { name: /Submeter Teste/ }));
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Already completed.');
+      const readsAfter = mock.mock.calls.filter(
+        ([url]) =>
+          (url as string).includes('/test-sessions/') && !(url as string).includes('/complete'),
+      ).length;
+      expect(readsAfter).toBeGreaterThan(readsBefore);
+    });
   });
 
   it('shows an error state when the session fails to load', async () => {

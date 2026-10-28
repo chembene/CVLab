@@ -34,6 +34,7 @@ function makeHistoryEntry(
     score: 75,
     startedAt: '2026-01-01T10:00:00.000Z',
     completedAt: '2026-01-01T10:10:00.000Z',
+    timedOut: false,
     ...overrides,
   };
 }
@@ -111,15 +112,22 @@ describe('TechnicalTestsPage', () => {
     expect(screen.getByText('75')).toBeInTheDocument();
   });
 
-  it('renders an EXPIRED attempt with its status badge and no score', async () => {
+  it('marks an attempt closed automatically at the deadline, with its score', async () => {
     mockFetchByRoute({
       tests: [],
-      history: [makeHistoryEntry({ status: 'EXPIRED', score: null, completedAt: null })],
+      history: [makeHistoryEntry({ timedOut: true, score: 40 })],
     });
     renderWithQueryClient(<TechnicalTestsPage />);
     expect(await screen.findByText(/SQL Básico/)).toBeInTheDocument();
-    expect(screen.getByText('Expired')).toBeInTheDocument();
-    expect(screen.queryByText('75')).not.toBeInTheDocument();
+    expect(screen.getByText('Tempo esgotado')).toBeInTheDocument();
+    expect(screen.getByText('40')).toBeInTheDocument();
+  });
+
+  it('does not mark an attempt submitted in time as timed out', async () => {
+    mockFetchByRoute({ tests: [], history: [makeHistoryEntry()] });
+    renderWithQueryClient(<TechnicalTestsPage />);
+    await screen.findByText(/SQL Básico/);
+    expect(screen.queryByText('Tempo esgotado')).not.toBeInTheDocument();
   });
 
   it('starting a test navigates to the new session', async () => {

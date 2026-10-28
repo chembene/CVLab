@@ -1,4 +1,9 @@
-import { computeRemainingSeconds, isSessionExpired, resolveSessionStatus } from './test-timer.util';
+import {
+  computeRemainingSeconds,
+  isSessionExpired,
+  sessionDeadline,
+  wasTimedOut,
+} from './test-timer.util';
 
 describe('computeRemainingSeconds', () => {
   it('returns null when the test has no time limit', () => {
@@ -45,24 +50,34 @@ describe('isSessionExpired', () => {
   });
 });
 
-describe('resolveSessionStatus', () => {
-  const startedAt = new Date('2026-01-01T10:00:00Z');
-  const within = new Date('2026-01-01T10:05:00Z'); // 5 of 15 minutes
-  const after = new Date('2026-01-01T10:20:00Z'); // 20 of 15 minutes
+describe('sessionDeadline', () => {
+  const startedAt = new Date('2026-01-01T10:00:00.000Z');
 
-  it('IN_PROGRESS within the time limit', () => {
-    expect(resolveSessionStatus('IN_PROGRESS', 15, startedAt, within)).toBe('IN_PROGRESS');
+  it('is startedAt plus the limit in minutes', () => {
+    expect(sessionDeadline(15, startedAt)).toEqual(new Date('2026-01-01T10:15:00.000Z'));
   });
 
-  it('EXPIRED once an IN_PROGRESS session is past its time limit', () => {
-    expect(resolveSessionStatus('IN_PROGRESS', 15, startedAt, after)).toBe('EXPIRED');
+  it('is null when the test has no time limit', () => {
+    expect(sessionDeadline(null, startedAt)).toBeNull();
+  });
+});
+
+describe('wasTimedOut', () => {
+  const startedAt = new Date('2026-01-01T10:00:00.000Z');
+
+  it('is true when the attempt was closed exactly at the deadline (automatic close)', () => {
+    expect(wasTimedOut(15, startedAt, new Date('2026-01-01T10:15:00.000Z'))).toBe(true);
   });
 
-  it('COMPLETED is never affected by the time limit', () => {
-    expect(resolveSessionStatus('COMPLETED', 15, startedAt, after)).toBe('COMPLETED');
+  it('is false when the user submitted before the deadline', () => {
+    expect(wasTimedOut(15, startedAt, new Date('2026-01-01T10:10:00.000Z'))).toBe(false);
   });
 
-  it('IN_PROGRESS forever when the test has no time limit', () => {
-    expect(resolveSessionStatus('IN_PROGRESS', null, startedAt, after)).toBe('IN_PROGRESS');
+  it('is false while the attempt is still open (no completedAt)', () => {
+    expect(wasTimedOut(15, startedAt, null)).toBe(false);
+  });
+
+  it('is never true for a test without a time limit', () => {
+    expect(wasTimedOut(null, startedAt, new Date('2026-01-02T10:00:00.000Z'))).toBe(false);
   });
 });

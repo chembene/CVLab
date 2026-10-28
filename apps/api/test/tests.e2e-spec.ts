@@ -319,87 +319,266 @@ describe('Technical Tests Engine (e2e)', () => {
   // ---------------------------------------------------------------------
 
   describe('Timer expiry', () => {
-    it('treats an overdue attempt as EXPIRED: listed as Expired, rejects answers and completion, never reveals answers, writes nothing', async () => {
-      const { accessToken } = await registerAndLogin('timer-expiry');
+    /** Starts a timed attempt and optionally answers its one question, returning ids. */
+    async function startTimedAttempt(label: string, answer?: 'Right' | 'Wrong') {
+      const { userId, accessToken } = await registerAndLogin(label);
       const startRes = await request(app.getHttpServer())
         .post(`/api/v1/tests/${timedTestId}/start`)
         .set(auth(accessToken));
-      const sessionId = startRes.body.data.id;
-      expect(startRes.body.data.status).toBe('IN_PROGRESS');
+      const sessionId: string = startRes.body.data.id;
+      if (answer) {
+        const res = await request(app.getHttpServer())
+          .post(`/api/v1/test-sessions/${sessionId}/answer`)
+          .set(auth(accessToken))
+          .send({ questionId: timedQuestionId, selectedAnswer: answer });
+        expect(res.status).toBe(201);
+      }
+      return { userId, accessToken, sessionId };
+    }
 
-      // Within the limit: listed as IN_PROGRESS.
-      const withinRes = await request(app.getHttpServer())
-        .get('/api/v1/test-sessions')
-        .set(auth(accessToken));
-      expect(withinRes.body.data.find((e: { id: string }) => e.id === sessionId).status).toBe(
-        'IN_PROGRESS',
-      );
+    /** Moves startedAt far into the past — the 10-minute limit has long run out. The server, never the client, decides this. */
+    async function makeOverdue(sessionId: string): Promise<Date> {
+      const startedAt = new Date(Date.now() - 60 * 60_000);
+      await prisma.testSession.update({ where: { id: sessionId }, data: { startedAt } });
+      return startedAt;
+    }
 
-      // Force the session's startedAt into the past, well beyond the
-      // 10-minute limit — the server, never the client, decides expiry.
-      await prisma.testSession.update({
-        where: { id: sessionId },
-        data: { startedAt: new Date(Date.now() - 60 * 60_000) },
+    const completedEventCount = (userId: string) =>
+      prisma.historyEvent.count({
+        where: { userId, eventType: 'technical_test_session_completed' },
       });
 
+    it('auto-closes an overdue attempt: answers saved before the deadline are scored, the result is persisted, listed, revealed — and no credits move', async () => {
+      const { userId, accessToken, sessionId } = await startTimedAttempt('timer-auto', 'Right');
+      const startedAt = await makeOverdue(sessionId);
+      const deadline = new Date(startedAt.getTime() + 10 * 60_000);
+
+      // The history list is the first thing that touches it: it closes and scores it.
       const listRes = await request(app.getHttpServer())
         .get('/api/v1/test-sessions')
         .set(auth(accessToken));
-      expect(listRes.body.data.find((e: { id: string }) => e.id === sessionId).status).toBe(
-        'EXPIRED',
-      );
+      const entry = listRes.body.data.find((e: { id: string }) => e.id === sessionId);
+      expect(entry.status).toBe('COMPLETED');
+      expect(entry.score).toBe(100);
+      expect(entry.timedOut).toBe(true);
+
+      // Persisted — not merely displayed — with completedAt stamped as the deadline.
+      const row = await prisma.testSession.findUniqueOrThrow({ where: { id: sessionId } });
+      expect(row.status).toBe('COMPLETED');
+      expect(row.score).toBe(100);
+      expect(row.completedAt?.getTime()).toBe(deadline.getTime());
+      expect(await prisma.testAnswer.count({ where: { testSessionId: sessionId } })).toBe(1);
+
+      // Correct answers and explanations are revealed only now that it is closed.
+      const getRes = await request(app.getHttpServer())
+        .get(`/api/v1/test-sessions/${sessionId}`)
+        .set(auth(accessToken));
+      expect(getRes.body.data.status).toBe('COMPLETED');
+      expect(getRes.body.data.timedOut).toBe(true);
+      expect(getRes.body.data.remainingSeconds).toBeNull();
+      expect(getRes.body.data.questions[0].correctAnswer).toBe('Right');
+      expect(getRes.body.data.questions[0].explanation).toBe('Because timed.');
+      const resultRes = await request(app.getHttpServer())
+        .get(`/api/v1/test-sessions/${sessionId}/result`)
+        .set(auth(accessToken));
+      expect(resultRes.status).toBe(200);
+
+      // A closed attempt can be neither answered nor submitted again.
+      const answerRes = await request(app.getHttpServer())
+        .post(`/api/v1/test-sessions/${sessionId}/answer`)
+        .set(auth(accessToken))
+        .send({ questionId: timedQuestionId, selectedAnswer: 'Wrong' });
+      expect(answerRes.status).toBe(409);
+      const completeRes = await request(app.getHttpServer())
+        .post(`/api/v1/test-sessions/${sessionId}/complete`)
+        .set(auth(accessToken));
+      expect(completeRes.status).toBe(409);
+      const after = await prisma.testSession.findUniqueOrThrow({ where: { id: sessionId } });
+      expect(after.score).toBe(100); // never re-scored
+      expect(after.completedAt?.getTime()).toBe(deadline.getTime());
+
+      // One history event, and the feature stayed free.
+      expect(await completedEventCount(userId)).toBe(1);
+      expect(await prisma.creditTransaction.count({ where: { userId } })).toBe(0);
+    }, 30000);
+
+    it('auto-closes an overdue attempt with no answers at all as a 0 score', async () => {
+      const { accessToken, sessionId } = await startTimedAttempt('timer-empty');
+      await makeOverdue(sessionId);
 
       const getRes = await request(app.getHttpServer())
         .get(`/api/v1/test-sessions/${sessionId}`)
         .set(auth(accessToken));
-      expect(getRes.body.data.status).toBe('EXPIRED');
-      expect(getRes.body.data.remainingSeconds).toBe(0);
-      expect(getRes.body.data.questions[0]).not.toHaveProperty('correctAnswer');
+      expect(getRes.body.data.status).toBe('COMPLETED');
+      expect(getRes.body.data.score).toBe(0);
+      expect(getRes.body.data.timedOut).toBe(true);
+    });
+
+    it('an incorrect answer saved before the deadline is scored as incorrect', async () => {
+      const { accessToken, sessionId } = await startTimedAttempt('timer-wrong', 'Wrong');
+      await makeOverdue(sessionId);
+
+      const getRes = await request(app.getHttpServer())
+        .get(`/api/v1/test-sessions/${sessionId}`)
+        .set(auth(accessToken));
+      expect(getRes.body.data.score).toBe(0);
+      expect(getRes.body.data.questions[0].isCorrect).toBe(false);
+    });
+
+    it('rejects an answer sent after the deadline — nothing is persisted — and closes the attempt', async () => {
+      const { accessToken, sessionId } = await startTimedAttempt('timer-late-answer');
+      await makeOverdue(sessionId);
 
       const answerRes = await request(app.getHttpServer())
         .post(`/api/v1/test-sessions/${sessionId}/answer`)
         .set(auth(accessToken))
         .send({ questionId: timedQuestionId, selectedAnswer: 'Right' });
       expect(answerRes.status).toBe(409);
+      expect(await prisma.testAnswer.count({ where: { testSessionId: sessionId } })).toBe(0);
+
+      const row = await prisma.testSession.findUniqueOrThrow({ where: { id: sessionId } });
+      expect(row.status).toBe('COMPLETED');
+      expect(row.score).toBe(0); // the late "Right" never counted
+    });
+
+    it('a manual submit after the deadline is honoured as the automatic close (deadline timestamp, timed out), exactly once', async () => {
+      const { userId, accessToken, sessionId } = await startTimedAttempt(
+        'timer-late-submit',
+        'Right',
+      );
+      const startedAt = await makeOverdue(sessionId);
 
       const completeRes = await request(app.getHttpServer())
         .post(`/api/v1/test-sessions/${sessionId}/complete`)
         .set(auth(accessToken));
-      expect(completeRes.status).toBe(409);
-
-      const resultRes = await request(app.getHttpServer())
-        .get(`/api/v1/test-sessions/${sessionId}/result`)
-        .set(auth(accessToken));
-      expect(resultRes.status).toBe(409);
-
-      // Display-only: nothing was written to expire it, and no answer slipped in.
+      expect(completeRes.status).toBe(201);
+      expect(completeRes.body.data.score).toBe(100);
+      expect(completeRes.body.data.timedOut).toBe(true);
       const row = await prisma.testSession.findUniqueOrThrow({ where: { id: sessionId } });
-      expect(row.status).toBe('IN_PROGRESS');
-      expect(row.score).toBeNull();
-      expect(await prisma.testAnswer.count({ where: { testSessionId: sessionId } })).toBe(0);
+      expect(row.completedAt?.getTime()).toBe(startedAt.getTime() + 10 * 60_000);
+
+      const again = await request(app.getHttpServer())
+        .post(`/api/v1/test-sessions/${sessionId}/complete`)
+        .set(auth(accessToken));
+      expect(again.status).toBe(409);
+      expect(await completedEventCount(userId)).toBe(1);
     });
 
-    it('a COMPLETED attempt stays COMPLETED in the list even when its start time is long past the limit', async () => {
-      const { accessToken } = await registerAndLogin('timer-completed');
-      const startRes = await request(app.getHttpServer())
-        .post(`/api/v1/tests/${timedTestId}/start`)
+    it('a manual submit before the deadline is a normal completion, not timed out', async () => {
+      const { accessToken, sessionId } = await startTimedAttempt('timer-in-time', 'Right');
+
+      const completeRes = await request(app.getHttpServer())
+        .post(`/api/v1/test-sessions/${sessionId}/complete`)
         .set(auth(accessToken));
-      const sessionId = startRes.body.data.id;
+      expect(completeRes.status).toBe(201);
+      expect(completeRes.body.data.score).toBe(100);
+      expect(completeRes.body.data.timedOut).toBe(false);
+    });
+
+    it('a COMPLETED attempt stays COMPLETED and untouched in the list even when its start time is long past the limit', async () => {
+      const { accessToken, sessionId } = await startTimedAttempt('timer-completed', 'Right');
       await request(app.getHttpServer())
         .post(`/api/v1/test-sessions/${sessionId}/complete`)
         .set(auth(accessToken))
         .expect(201);
-      await prisma.testSession.update({
-        where: { id: sessionId },
-        data: { startedAt: new Date(Date.now() - 60 * 60_000) },
-      });
+      const before = await prisma.testSession.findUniqueOrThrow({ where: { id: sessionId } });
+      await makeOverdue(sessionId);
+
       const listRes = await request(app.getHttpServer())
         .get('/api/v1/test-sessions')
         .set(auth(accessToken));
-      expect(listRes.body.data.find((e: { id: string }) => e.id === sessionId).status).toBe(
-        'COMPLETED',
-      );
+      const entry = listRes.body.data.find((e: { id: string }) => e.id === sessionId);
+      expect(entry.status).toBe('COMPLETED');
+      const after = await prisma.testSession.findUniqueOrThrow({ where: { id: sessionId } });
+      expect(after.score).toBe(before.score);
+      expect(after.completedAt?.getTime()).toBe(before.completedAt?.getTime());
     });
+
+    it('simultaneous requests on one overdue attempt close it exactly once: same result everywhere, one history event', async () => {
+      const { userId, accessToken, sessionId } = await startTimedAttempt(
+        'timer-concurrent',
+        'Right',
+      );
+      await makeOverdue(sessionId);
+
+      const responses = await Promise.all(
+        Array.from({ length: 8 }, (_, i) =>
+          i % 2 === 0
+            ? request(app.getHttpServer())
+                .get(`/api/v1/test-sessions/${sessionId}`)
+                .set(auth(accessToken))
+            : request(app.getHttpServer()).get('/api/v1/test-sessions').set(auth(accessToken)),
+        ),
+      );
+
+      for (const res of responses) expect(res.status).toBe(200);
+      const scores = responses.map((res) =>
+        Array.isArray(res.body.data)
+          ? res.body.data.find((e: { id: string }) => e.id === sessionId).score
+          : res.body.data.score,
+      );
+      expect(new Set(scores)).toEqual(new Set([100]));
+      expect(await completedEventCount(userId)).toBe(1);
+      expect(
+        await prisma.testSession.count({ where: { id: sessionId, status: 'COMPLETED' } }),
+      ).toBe(1);
+    }, 30000);
+
+    it('simultaneous manual submits: exactly one succeeds, every other gets 409, one history event', async () => {
+      const { userId, accessToken, sessionId } = await startTimedAttempt(
+        'timer-double-submit',
+        'Right',
+      );
+
+      const responses = await Promise.all(
+        Array.from({ length: 6 }, () =>
+          request(app.getHttpServer())
+            .post(`/api/v1/test-sessions/${sessionId}/complete`)
+            .set(auth(accessToken)),
+        ),
+      );
+
+      const statuses = responses.map((res) => res.status).sort();
+      expect(statuses.filter((s) => s === 201)).toHaveLength(1);
+      expect(statuses.filter((s) => s === 409)).toHaveLength(5);
+      expect(await completedEventCount(userId)).toBe(1);
+      const row = await prisma.testSession.findUniqueOrThrow({ where: { id: sessionId } });
+      expect(row.score).toBe(100);
+    }, 30000);
+
+    it('answer vs submit race: whichever the server accepts is consistent with the final score — no answer is saved yet unscored, none scored yet unsaved', async () => {
+      for (let i = 0; i < 8; i += 1) {
+        const { accessToken } = await registerAndLogin(`timer-race-${i}`);
+        const startRes = await request(app.getHttpServer())
+          .post(`/api/v1/tests/${fixtureTestId}/start`)
+          .set(auth(accessToken));
+        const sessionId: string = startRes.body.data.id;
+
+        const [answerRes, completeRes] = await Promise.all([
+          request(app.getHttpServer())
+            .post(`/api/v1/test-sessions/${sessionId}/answer`)
+            .set(auth(accessToken))
+            .send({ questionId: questionAId, selectedAnswer: 'Right' }),
+          request(app.getHttpServer())
+            .post(`/api/v1/test-sessions/${sessionId}/complete`)
+            .set(auth(accessToken)),
+        ]);
+
+        expect(completeRes.status).toBe(201); // the only submit always wins its own close
+        const row = await prisma.testSession.findUniqueOrThrow({ where: { id: sessionId } });
+        const savedAnswers = await prisma.testAnswer.count({ where: { testSessionId: sessionId } });
+        if (answerRes.status === 201) {
+          // Saved before the close → must be in the score (1 of 2 correct = 50).
+          expect(savedAnswers).toBe(1);
+          expect(row.score).toBe(50);
+        } else {
+          // Arrived after the close → rejected, not saved, not scored.
+          expect(answerRes.status).toBe(409);
+          expect(savedAnswers).toBe(0);
+          expect(row.score).toBe(0);
+        }
+      }
+    }, 60000);
 
     it('reports a decreasing, never-negative remainingSeconds for an in-progress timed session', async () => {
       const { accessToken } = await registerAndLogin('timer-remaining');
