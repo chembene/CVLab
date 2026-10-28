@@ -931,6 +931,118 @@ marketing page). Typecheck/lint clean across both apps (one real lint error caug
 15.6 kB in the build's own page table, confirming the new panel is bundled. Full design in
 [cv-import-ai.md](../architecture/cv-import-ai.md).
 
+## Phase Technical Tests Engine (as implemented)
+
+Audited read-only before implementation ("PHASE 23 — TECHNICAL TESTS ENGINE"), per the original roadmap's own
+Phase 9 "Tests" requirement (`prompts/14-development-roadmap.md`: Test categories, Question bank, Test
+sessions, Timer, Answers, Score, Explanations, History) — the one reserved capability from that document's own
+Phase 0-16 list that had never been built. The audit's central finding, before any code was written: `Test`,
+`Question`, `TestSession`, and `TestAnswer` already existed in `prisma/schema.prisma`, fully modeled with every
+field the roadmap asks for — but **zero backend code and zero frontend code anywhere referenced them**,
+confirmed by an exhaustive grep. A pure, dormant schema scaffold, exactly like the pre-existing `Cv`/`CvVersion`
+placeholder this codebase's own comments already document. This phase built the entire service/repository/
+controller/frontend layer on top of that already-correct schema — no second "Tests" system, no duplication of
+Interview Practice (a genuinely different, already-shipped feature: AI-generated questions, AI-evaluated
+free-text answers, credit-charging — untouched by this phase).
+
+**Credit decision**: free, by design — not a silent omission. The audit found no price for a "technical test"
+feature ever documented, seeded, or approved anywhere in this codebase (the phrase "technical test scoring"
+appears exactly once, as a generic illustrative example, never in the real pricing table), and the original
+roadmap's own Phase 9 spec never mentions credits at all. This matches the exact precedent already established
+by every other 100%-deterministic engine in this codebase (ATS Analysis, CV Import's own extraction, Job
+Import) — none of which charge, none of which have an `AIFeature` key. `TestsService` has no constructor
+dependency on `AiOrchestrationService` or `CreditService` at all — structurally impossible for this module to
+touch AI or credits, the same "the constructor signature enforces the boundary" pattern every prior AI feature
+uses in reverse. `module-boundaries.md`'s own pre-existing conceptual note ("Tests → Credits", written before
+any implementation existed) was corrected, not silently left stale.
+
+**Database**: exactly one additive migration, `20260909181056_technical_tests_engine` — adds `updated_at` to
+`test_answers` and a `@@unique([testSessionId, questionId])` constraint, applied to a table confirmed to have
+zero rows in any environment before migrating. No new table. `TestSession.status` deliberately stays a raw
+`String` column (a pre-existing inconsistency in the dormant scaffold — every other status-like column in this
+schema is a real Postgres enum) rather than risking an unrelated `ALTER TYPE` migration; the fixed value set is
+enforced at the application layer instead.
+
+**Timer**: no timer infrastructure existed anywhere else in the codebase to reuse (confirmed by audit) — built
+server-authoritative from scratch (`test-timer.util.ts`), computed fresh from `TestSession.startedAt` +
+`Test.timeLimit` (minutes) on every request, never trusting a client-reported value. `submitAnswer()` rejects
+once the deadline passes; `completeSession()` never rejects on expiry, so a late final submit still scores
+whatever was recorded — the same "the visible countdown is a display convenience, the server decides" split
+this session's own CV Import AI phase (FASE 22) established for a different kind of time-sensitive check.
+
+**Scoring**: deterministic exact-match only, per the brief's explicit "do not use AI for ordinary multiple-
+choice scoring" — `isAnswerCorrect()`/`computeScorePercentage()` are plain pure functions, no judgment call, no
+provider call. "Never expose correct answers before submission" is enforced in exactly one place
+(`technical-test-view.builder.ts`'s `buildSessionView()`), reused by every response path, so no second code
+path could accidentally leak an answer early.
+
+**Seed data**: `apps/api/src/tests/seed/technical-tests.seed.ts` — 3 tests (Programming/SQL/Data), 13 questions,
+stable slug ids, following the exact idempotent-upsert convention `resume-templates.seed.ts` (Phase 11)
+established; `npm run db:seed:technical-tests` seeds it. The e2e suite never depends on this shared catalog —
+it creates and tears down its own dedicated fixture tests.
+
+Frontend: **a new page**, `/dashboard/technical-tests` (catalog + attempt history) and
+`/dashboard/technical-tests/:id` (one session — active-taking view or completed-result view, driven entirely
+by the session's own `status`). No credit-cost indicator anywhere, since there is no cost. Reused components
+only (`PageHeader`/`Card`/`Badge`/`Button`/`Skeleton`/`EmptyState`/`ErrorState`/`StatusBadge`/`ScoreBadge`/
+`Alert`/`Select`) — no new low-level UI primitive introduced.
+
+Quality gate: backend unit **1270/1270** (79 new — timer/scoring utils, view builder, repository, service, both
+controllers), backend e2e `tests.e2e-spec.ts` **15/15** (the brief's own 10-step full flow in one pass, retakes,
+answer-editing-before-completion, category filter, timer expiry both directions, ownership, admin bypass, 5
+distinct error-handling cases, seed-catalog integrity). **A real robustness bug was found and fixed during this
+phase's own quality-gate run, not introduced by it**: `tests.e2e-spec.ts`'s `afterAll()` referenced fixture ids
+that were assigned inside `beforeAll()` — when a full 24-suite sequential run hit the same pre-existing,
+already-documented "`AppModule` compile exceeds Jest's default 5000ms hook timeout under sustained load"
+flakiness every e2e spec in this codebase is equally exposed to (confirmed: 6 _other_, unrelated suites —
+`cover-letter`, `cv-import`, `cv-import-ai`, `application-pipeline`, `credit-engine`, `job-target-engine` — failed
+the exact same way in that same run), this file's own `afterAll()` then crashed a second time on an `undefined`
+array value instead of failing cleanly. Fixed by computing the fixture ids as `const`s at describe-scope
+instead of inside `beforeAll` (so `afterAll` always has real ids to filter on, even if `beforeAll` itself never
+completes) and guarding `app.close()`/`throttlerSpy.mockRestore()` against never having been assigned — a
+scoped hardening of this phase's own new file only, not a claim to have fixed the shared, pre-existing hook-
+timeout flakiness itself. Re-verified clean afterward: the suite passed standalone on retry, and all 6 other
+previously-failed suites passed 100% on their own retry too, confirming the whole episode was transient
+environmental flakiness, not a real regression. Frontend **18 new tests** (re-counted in the finalisation pass; an earlier figure of 28 here was inaccurate) (catalog: loading/empty/error, category
+filter, start-session, attempt history; session page: active question rendering with no leaked answers, timer
+countdown display, answer submission, error toast, test submission, completed-result rendering with
+explanations, disabled choices post-completion, error state), full frontend suite **261/263** (same 2
+pre-existing, unrelated `IntersectionObserver` failures on the marketing page). Typecheck/lint clean across
+both apps (zero warnings in the new module; existing warnings elsewhere are 100% pre-existing
+`no-explicit-any`), `nest build`/`next build` clean. Full design in
+[technical-tests.md](../architecture/technical-tests.md).
+
+**Finalisation pass** (after live verification of the running system) — three changes, all inside this phase:
+
+1. **Expired attempts.** An `IN_PROGRESS` attempt past its time limit is now reported as `EXPIRED` by the
+   server — derived at read time from the server clock (`resolveSessionStatus()`), never persisted, so no
+   background job or retroactive write is needed. The attempt list, the session view and the write guards share
+   that one rule; the frontend only renders the returned status. An expired attempt accepts no answers and can no
+   longer be submitted (409), and never reveals correct answers. This **reverses** the first implementation's
+   "a late final submit still scores" behaviour — a deliberate product decision (the cost: answers recorded
+   before the deadline are lost if the user never submitted in time). `COMPLETED` is unaffected.
+2. **API dev/build fix (root cause found).** `nest build` / `nest start --watch` exited 0 while emitting
+   nothing. `nest-cli.json` has `deleteOutDir: true` (wipes `dist/` before each build) but `tsconfig.build.json`
+   inherits `incremental: true`, whose `.tsbuildinfo` cache defaulted to `apps/api/tsconfig.build.tsbuildinfo` —
+   outside `dist/`, so it survived the wipe and tsc concluded the deleted output was up to date. Fixed with one
+   line: `tsBuildInfoFile: ./dist/tsconfig.build.tsbuildinfo` (cache now dies with the output). Verified: repeated
+   root `npm run build -w @cvlab/api` always emits, a deliberate type error still fails the build, and
+   `npm run dev -w @cvlab/api` stays up and survives a watch rebuild.
+3. **Dev-DB residue.** Two leftover e2e fixture tests (`tests-e2e-d0973b29-fixture` / `-timed`, 3 questions, 0
+   sessions, 0 answers) from a run whose `afterAll` had crashed (the bug fixed above) were removed by exact id;
+   the three seeded tests and all real attempts were left untouched.
+
+Re-measured after the finalisation pass: backend unit **1283/1283** (135 suites), `tests.e2e-spec.ts` **16/16**,
+frontend full suite **264/266** (same 2 pre-existing `IntersectionObserver` failures) with the two Technical
+Tests page specs at 21/21 — this supersedes the earlier counts quoted above. Typecheck, lint (0 errors) and the
+full `npm run build` are clean; `prisma validate` passes.
+Full sequential e2e run (`--runInBand`, shared Postgres/Redis): **21/24 suites, 306/335 tests**. The 3 failing suites
+(`cv-import`, `cv-import-ai`, `application-pipeline`) do not touch this feature's code and each passed 100% when
+re-run on its own (12/12, 14/14, 8/8). The difference between the joint and isolated runs points to possible
+interference between suites or to the shared environment (state left behind, load), but **no root cause was
+investigated or proven** — it is recorded as an open, unexplained e2e-isolation issue, not as a Technical Tests
+regression and not as a confirmed flake.
+
 ## Phase 0 Readiness
 
 As of this pass, the open architectural questions that would have blocked confident Phase 0 scaffolding are resolved: `prompts/` path structure, CV data model, test retake policy, AI request tracking, credit-failure/refund rule, soft-delete scope, admin MFA extensibility, token storage, PII classification/retention, payment provider abstraction, credit/payment separation, domain events, full database entity list, and credit package/feature pricing configuration. See the architecture assessment for the full resolution list. Phase 0 (repo scaffolding, TypeScript/lint/format config, Prisma+PostgreSQL wiring, Docker, test runner config) can now begin without further product decisions blocking it.

@@ -1895,6 +1895,14 @@ model TestSession {
   @@map("test_sessions")
 }
 
+/// FASE 23 audit: added `@@unique([testSessionId, questionId])` and `updatedAt`
+/// — both purely additive on a table with zero rows in any environment
+/// (this model was schema-only, never referenced by any service/controller,
+/// exactly like the old placeholder InterviewQuestion this schema's own
+/// comment above already documents replacing). The unique constraint is
+/// what makes "one answer per question per session, editable until
+/// completion" an upsert instead of an application-level race condition —
+/// see TestsRepository.upsertAnswer().
 model TestAnswer {
   id             String   @id @default(uuid())
   testSessionId  String   @map("test_session_id")
@@ -1902,10 +1910,12 @@ model TestAnswer {
   selectedAnswer String?  @map("selected_answer")
   isCorrect      Boolean? @map("is_correct")
   createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
 
   session  TestSession @relation(fields: [testSessionId], references: [id])
   question Question    @relation(fields: [questionId], references: [id])
 
+  @@unique([testSessionId, questionId])
   @@index([testSessionId])
   @@map("test_answers")
 }

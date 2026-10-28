@@ -34,6 +34,7 @@ import { CareerAdvisorModule } from './career-advisor/career-advisor.module';
 import { LinkedInModule } from './linkedin/linkedin.module';
 import { AtsAiModule } from './ats-ai/ats-ai.module';
 import { TemplateRecommendationModule } from './template-recommendation/template-recommendation.module';
+import { TestsModule } from './tests/tests.module';
 
 @Module({
   imports: [
@@ -78,6 +79,7 @@ import { TemplateRecommendationModule } from './template-recommendation/template
     LinkedInModule,
     AtsAiModule,
     TemplateRecommendationModule,
+    TestsModule,
   ],
   providers: [
     {

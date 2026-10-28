@@ -100,12 +100,13 @@ The table this section carried since Phase 5 named features that were never buil
 
 **Free by design — never charged, not a pricing gap:**
 
-| Feature                    | Why                                                                                                                                                                                                   |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ATS Analysis               | 100% deterministic, rule-based, no AI/OpenAI call anywhere in the module                                                                                                                              |
-| CV Import                  | Deterministic PDF/DOCX extraction, no AI — `credits_used` is always 0                                                                                                                                 |
-| Job Import                 | Deterministic fetch/parse, no AI                                                                                                                                                                      |
-| Smart Application Pipeline | Never charges on its own — pure orchestration; each step it delegates to (ATS/Resume Optimization/Cover Letter/Interview/Export) charges through its own already-listed mechanism above, exactly once |
+| Feature                    | Why                                                                                                                                                                                                                                   |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ATS Analysis               | 100% deterministic, rule-based, no AI/OpenAI call anywhere in the module                                                                                                                                                              |
+| CV Import                  | Deterministic PDF/DOCX extraction, no AI — `credits_used` is always 0                                                                                                                                                                 |
+| Job Import                 | Deterministic fetch/parse, no AI                                                                                                                                                                                                      |
+| Smart Application Pipeline | Never charges on its own — pure orchestration; each step it delegates to (ATS/Resume Optimization/Cover Letter/Interview/Export) charges through its own already-listed mechanism above, exactly once                                 |
+| Technical Tests            | FASE 23 — 100% deterministic multiple-choice scoring, no AI, no `AIFeature` key; distinct from Interview Practice, which does charge (AI-generated questions, AI-evaluated answers) — see [technical-tests.md](technical-tests.md) §7 |
 
 **Not implemented yet:** none — every reserved `AIFeature` key with a real, briefed use case is now implemented and priced (see the table above). `INTERVIEW` (the generic Phase 6 placeholder, superseded by its 6 mode-specific keys) remains reserved-but-dormant by design, not pending implementation.
 

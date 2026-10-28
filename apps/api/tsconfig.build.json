@@ -2,6 +2,12 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "rootDir": "src",
+    // nest-cli.json sets deleteOutDir: true, which wipes dist/ before every
+    // build. The incremental cache must live inside dist/ too — by default
+    // tsc writes it next to this file, so it survived the wipe, tsc believed
+    // the (deleted) output was current, and `nest build` / `nest start`
+    // exited 0 while emitting nothing.
+    "tsBuildInfoFile": "./dist/tsconfig.build.tsbuildinfo",
     // Production build resolves @cvlab/types through the real node_modules
     // package (built dist, see packages/types), not through the source
     // "paths" override tsconfig.json uses for fast dev-time typechecking —
